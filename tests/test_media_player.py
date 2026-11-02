@@ -30,6 +30,16 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(fresh.state, S.OFF)
         self.assertTrue(fresh.available)
 
+    async def test_paused_app_shows_paused_so_the_play_button_appears(self):
+        p, coord = player(apps={"apps": APPS, "running": True, "appid": "250900", "name": "Isaac", "playback": "playing"})
+        self.assertEqual(p.state, S.PLAYING)
+        coord.on_state("apps", {"apps": APPS, "running": True, "appid": "250900", "name": "Isaac", "playback": "paused"})
+        self.assertEqual((p.state, p.extra_state_attributes["playback"]), (S.PAUSED, "paused"))
+        coord.on_state("apps", {"apps": APPS, "running": True, "appid": "250900", "name": "Isaac", "playback": "unknown"})
+        self.assertEqual(p.state, S.PLAYING)  # an app that reports nothing is assumed to be playing
+        coord.on_state("apps", {"apps": APPS, "running": False, "playback": "paused"})
+        self.assertEqual(p.state, S.IDLE)
+
     async def test_sources_and_current_source(self):
         p, coord = player(apps={"apps": APPS, "running": False})
         self.assertEqual(p.source_list, ["Steam", "Jellyfin", "Isaac"])

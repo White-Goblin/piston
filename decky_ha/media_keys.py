@@ -21,6 +21,7 @@ KEY_CODES = {"play_pause": 164, "play": 200, "pause": 201, "next": 163, "previou
 
 UI_SET_EVBIT, UI_SET_KEYBIT, UI_DEV_CREATE, UI_DEV_DESTROY = 0x40045564, 0x40045565, 0x5501, 0x5502
 UINPUT_PATH = "/dev/uinput"
+PLAYBACK_POLL_SECONDS = 2
 EV_KEY, EV_SYN = 1, 0
 
 
@@ -57,22 +58,52 @@ class VirtualKeyboard:
 class MediaKeyMixin:
     keyboard: VirtualKeyboard | None = None
 
-    def _mpris_players(self) -> list:
-        """Bus names of MPRIS players, the playing ones first."""
+    def _mpris_statuses(self) -> list:
+        """[(bus name, "Playing" | "Paused" | "Stopped" | "")] for every MPRIS player on the session bus."""
         try:
             listing = self._busctl("list", "--no-legend")
         except (RuntimeError, OSError, subprocess.SubprocessError):
             return []
-        names = [line.split()[0] for line in listing.splitlines() if line.startswith(MPRIS_PREFIX)]
-
-        def rank(name: str) -> int:
+        found = []
+        for line in listing.splitlines():
+            if not line.startswith(MPRIS_PREFIX):
+                continue
+            name = line.split()[0]
             try:
-                status = self._busctl("get-property", name, MPRIS_PATH, MPRIS_PLAYER, "PlaybackStatus")
+                raw = self._busctl("get-property", name, MPRIS_PATH, MPRIS_PLAYER, "PlaybackStatus")
             except (RuntimeError, OSError, subprocess.SubprocessError):
-                return 3
-            return 0 if '"Playing"' in status else 1 if '"Paused"' in status else 2
+                raw = ""
+            found.append((name, next((st for st in ("Playing", "Paused", "Stopped") if f'"{st}"' in raw), "")))
+        return found
 
-        return sorted(names, key=rank)
+    def _mpris_players(self) -> list:
+        """Bus names of MPRIS players, the playing ones first."""
+        order = {"Playing": 0, "Paused": 1, "Stopped": 2}
+        return [name for name, status in sorted(self._mpris_statuses(), key=lambda p: order.get(p[1], 3))]
+
+    def _playback_status(self) -> str:
+        """"playing", "paused", "stopped" or "unknown" (no player reports anything, for example a game)."""
+        statuses = {status for _, status in self._mpris_statuses()}
+        for status in ("Playing", "Paused", "Stopped"):
+            if status in statuses:
+                return status.lower()
+        return "unknown"
+
+    async def _refresh_playback(self) -> None:
+        """Update the apps group when the playback status changed (nothing is playing without a running app)."""
+        status = "unknown"
+        if self.app_state["running"]:
+            status = await asyncio.get_running_loop().run_in_executor(None, self._playback_status)
+        if status != self.app_state.get("playback"):
+            self._set_app_state(playback=status)
+
+    async def _playback_loop(self) -> None:
+        while True:
+            try:
+                await self._refresh_playback()
+            except Exception as e:  # noqa: BLE001 - a failed poll must not end the loop
+                decky.logger.warning(f"Playback status failed: {e}")
+            await asyncio.sleep(PLAYBACK_POLL_SECONDS)
 
     def _press_virtual_key(self, key: str) -> None:
         if self.keyboard is None:
@@ -99,7 +130,10 @@ class MediaKeyMixin:
         key = data.get("key")
         if key not in MPRIS_METHODS:
             raise m.ProtocolError(m.BAD_REQUEST, f"key must be one of {', '.join(MPRIS_METHODS)}")
-        return await asyncio.get_running_loop().run_in_executor(None, self._send_media_key, key)
+        result = await asyncio.get_running_loop().run_in_executor(None, self._send_media_key, key)
+        await asyncio.sleep(0.4)  # let the player change state, so Home Assistant shows play/pause at once
+        await self._refresh_playback()
+        return result
 
     def _close_keyboard(self) -> None:
         if self.keyboard is not None:

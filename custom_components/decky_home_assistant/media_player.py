@@ -53,7 +53,10 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
             return MediaPlayerState.OFF
         if power == "standby":
             return MediaPlayerState.STANDBY
-        return MediaPlayerState.PLAYING if self._apps_group.get("running") else MediaPlayerState.IDLE
+        if not self._apps_group.get("running"):
+            return MediaPlayerState.IDLE
+        # The app's own playback status when it reports one (MPRIS), otherwise assume it is playing
+        return MediaPlayerState.PAUSED if self._apps_group.get("playback") == "paused" else MediaPlayerState.PLAYING
 
     @property
     def supported_features(self):
@@ -108,7 +111,8 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        return {"steam_screen": self._apps_group.get("screen"), "audio_mode": self._audio.get("mode")}
+        return {"steam_screen": self._apps_group.get("screen"), "audio_mode": self._audio.get("mode"),
+                "playback": self._apps_group.get("playback")}
 
     # --- commands -------------------------------------------------------------
 

@@ -96,7 +96,7 @@ class Plugin(
         self.controller_state = {}
         self.os_controllers = {}
         self.readings = None  # last real battery reading per controller, loaded lazily
-        self.app_state = {"running": False, "appid": "", "name": "", "screen": "steam"}
+        self.app_state = {"running": False, "appid": "", "name": "", "screen": "steam", "playback": "unknown"}
         self.sensor_wake = asyncio.Event()
         self.sensor_values = {}
         self.cpu_prev = None
@@ -134,13 +134,14 @@ class Plugin(
         self.device_task = asyncio.create_task(self._device_loop())
         self.session_task = asyncio.create_task(self._session_loop())
         self.resume_task = asyncio.create_task(self._resume_loop())
+        self.playback_task = asyncio.create_task(self._playback_loop())
         if self.server.port:
             self.advertiser = Advertiser(self._advert_info, self.server.port)
             await self.advertiser.start()
 
     async def _unload(self):
         decky.logger.info("Decky Home Assistant unloading")
-        for task in (self.sensor_task, self.audio_task, self.device_task, self.session_task, self.resume_task):
+        for task in (self.sensor_task, self.audio_task, self.device_task, self.session_task, self.resume_task, self.playback_task):
             task.cancel()
         if self.advertiser is not None:
             await self.advertiser.stop()
