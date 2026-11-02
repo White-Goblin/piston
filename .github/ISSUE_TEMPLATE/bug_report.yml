@@ -1,0 +1,23 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Integration version, plugin version, Home Assistant version, device (Steam Deck, Steam Machine, other)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Home Assistant log lines for `decky_home_assistant` and the plugin log from the device. Remove addresses and tokens first.
+      render: text

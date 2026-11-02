@@ -1,0 +1,266 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Add a device by address",
+        "description": "Devices are normally found automatically. Use this only if Home Assistant cannot see the device on the network (for example it is on another VLAN).",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port"
+        }
+      },
+      "confirm": {
+        "title": "Decky device found",
+        "description": "Found {name}. Next, enter the code shown on the device to pair it with Home Assistant."
+      },
+      "pair": {
+        "title": "Pair {name}",
+        "description": "Open the Decky Home Assistant panel on the device and enter the code shown there.",
+        "data": {
+          "code": "Pairing code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Pair {name} again",
+        "description": "The device no longer accepts this Home Assistant. In the plugin panel choose Reset pairing, then continue and enter the new code."
+      }
+    },
+    "error": {
+      "wrong_code": "That code is not right. Check the code on the device and try again.",
+      "code_expired": "The code expired. A new code is now shown on the device.",
+      "code_locked": "Too many wrong codes. Wait a minute, then enter the new code shown on the device.",
+      "version_skew": "The plugin and the integration versions are not compatible. Update the one that is older.",
+      "already_paired": "The device is already paired. In the plugin panel choose Reset pairing first.",
+      "cannot_connect": "Could not reach the device. Check that it is on and on the same network.",
+      "unknown": "Pairing failed."
+    },
+    "abort": {
+      "already_configured": "This device is already set up.",
+      "already_paired": "The device is already paired with another Home Assistant. In the plugin panel choose Reset pairing, then try again.",
+      "not_supported": "This device did not identify itself and cannot be set up.",
+      "wrong_device": "A different device answered. Try again.",
+      "reauth_successful": "Pairing was renewed."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Decky Home Assistant options",
+        "data": {
+          "turn_off": "What turning off does",
+          "sensor_interval": "Sensor update interval (seconds)",
+          "pip_cameras": "PiP cameras",
+          "pip_position": "PiP position",
+          "pip_size": "PiP size",
+          "pip_duration": "PiP hide after",
+          "pip_mute": "Mute PiP"
+        },
+        "data_description": {
+          "turn_off": "Sleep (suspend) can be woken again with Wake on LAN. Shutdown needs the power button on most devices.",
+          "pip_cameras": "Cameras offered in the PiP camera selector. The show_pip action works with any camera."
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "connectivity": {
+        "name": "Connectivity"
+      }
+    },
+    "switch": {
+      "desktop_mode": {
+        "name": "Desktop mode"
+      }
+    },
+    "button": {
+      "restart_device": {
+        "name": "Restart device"
+      },
+      "restart_steam": {
+        "name": "Restart Steam"
+      }
+    },
+    "sensor": {
+      "steam_screen": {
+        "name": "Steam screen",
+        "state": {
+          "game": "Game",
+          "steam_over_game": "Steam over game",
+          "steam": "Steam",
+          "desktop": "Desktop"
+        }
+      },
+      "pip_state": {
+        "name": "PiP state",
+        "state": {
+          "idle": "Idle",
+          "loading": "Loading",
+          "connecting": "Connecting",
+          "negotiating": "Negotiating",
+          "playing": "Playing",
+          "error": "Error"
+        }
+      }
+    },
+    "notify": {
+      "toast": {
+        "name": "Toast"
+      }
+    },
+    "event": {
+      "toast_click": {
+        "name": "Toast click",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "clicked": "Clicked"
+            }
+          }
+        }
+      }
+    },
+    "select": {
+      "pip_camera": {
+        "name": "PiP camera"
+      }
+    }
+  },
+  "issues": {
+    "version_skew_old": {
+      "title": "The plugin on {name} is too old",
+      "description": "Update the Decky Home Assistant plugin on the device (in Decky Loader) so it matches this integration."
+    },
+    "version_skew_new": {
+      "title": "The Decky Home Assistant integration is too old for {name}",
+      "description": "Update the integration in HACS, then restart Home Assistant."
+    }
+  },
+  "selector": {
+    "icon": {
+      "options": {
+        "bell": "Bell",
+        "bolt": "Bolt",
+        "camera": "Camera",
+        "car": "Car",
+        "door": "Door",
+        "fire": "Fire",
+        "home": "Home",
+        "light": "Light",
+        "lock": "Lock",
+        "motion": "Motion",
+        "temperature": "Temperature",
+        "warning": "Warning",
+        "water": "Water"
+      }
+    },
+    "pip_position": {
+      "options": {
+        "top": "Top",
+        "top-right": "Top right",
+        "right": "Right",
+        "bottom-right": "Bottom right",
+        "bottom": "Bottom",
+        "bottom-left": "Bottom left",
+        "left": "Left",
+        "top-left": "Top left"
+      }
+    },
+    "pip_size": {
+      "options": {
+        "small": "Small",
+        "medium": "Medium",
+        "large": "Large",
+        "extra_large": "Extra large"
+      }
+    },
+    "pip_duration": {
+      "options": {
+        "10": "10 seconds",
+        "20": "20 seconds",
+        "30": "30 seconds",
+        "60": "1 minute",
+        "300": "5 minutes",
+        "0": "Until hidden"
+      }
+    },
+    "turn_off": {
+      "options": {
+        "sleep": "Sleep (suspend)",
+        "shutdown": "Shut down"
+      }
+    },
+    "sensor_interval": {
+      "options": {
+        "10": "10 seconds",
+        "30": "30 seconds",
+        "60": "1 minute",
+        "300": "5 minutes"
+      }
+    }
+  },
+  "services": {
+    "show_toast": {
+      "name": "Show toast",
+      "description": "Show a notification on the device.",
+      "fields": {
+        "message": {
+          "name": "Message",
+          "description": "The text to show."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Heading of the toast. Defaults to Home Assistant."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long the toast stays, in seconds."
+        },
+        "icon": {
+          "name": "Icon",
+          "description": "A named icon."
+        },
+        "silent": {
+          "name": "Silent",
+          "description": "Do not play the notification sound."
+        },
+        "id": {
+          "name": "ID",
+          "description": "Passed back in the click event so automations can tell toasts apart."
+        }
+      }
+    },
+    "show_pip": {
+      "name": "Show PiP",
+      "description": "Show a camera over whatever is on the device. Replaces any camera already showing.",
+      "fields": {
+        "camera": {
+          "name": "Camera",
+          "description": "Any camera entity."
+        },
+        "position": {
+          "name": "Position",
+          "description": "Where on the screen. Defaults to the integration option."
+        },
+        "size": {
+          "name": "Size",
+          "description": "Defaults to the integration option."
+        },
+        "duration": {
+          "name": "Hide after",
+          "description": "Seconds before it hides; Until hidden keeps it. Defaults to the integration option."
+        },
+        "mute": {
+          "name": "Mute",
+          "description": "Defaults to the integration option."
+        }
+      }
+    },
+    "hide_pip": {
+      "name": "Hide PiP",
+      "description": "Hide the camera overlay.",
+      "fields": {}
+    }
+  }
+}

@@ -1,0 +1,85 @@
+show_toast:
+  target:
+    entity:
+      integration: decky_home_assistant
+      domain: notify
+  fields:
+    message:
+      required: true
+      example: "Someone is at the door"
+      selector:
+        text:
+    title:
+      example: "Doorbell"
+      selector:
+        text:
+    duration:
+      default: 5
+      selector:
+        number:
+          min: 0
+          max: 600
+          unit_of_measurement: s
+    icon:
+      selector:
+        select:
+          translation_key: icon
+          options:
+            - bell
+            - bolt
+            - camera
+            - car
+            - door
+            - fire
+            - home
+            - light
+            - lock
+            - motion
+            - temperature
+            - warning
+            - water
+    silent:
+      default: false
+      selector:
+        boolean:
+    id:
+      example: "doorbell"
+      selector:
+        text:
+
+show_pip:
+  target:
+    entity:
+      integration: decky_home_assistant
+      domain: select
+  fields:
+    camera:
+      required: true
+      example: camera.front_door
+      selector:
+        entity:
+          domain: camera
+    position:
+      selector:
+        select:
+          translation_key: pip_position
+          options: [top, top-right, right, bottom-right, bottom, bottom-left, left, top-left]
+    size:
+      selector:
+        select:
+          translation_key: pip_size
+          options: [small, medium, large, extra_large]
+    duration:
+      selector:
+        select:
+          translation_key: pip_duration
+          options: ["10", "20", "30", "60", "300", "0"]
+    mute:
+      selector:
+        boolean:
+
+hide_pip:
+  target:
+    entity:
+      integration: decky_home_assistant
+      domain: select

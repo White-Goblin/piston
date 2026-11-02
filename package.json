@@ -1,0 +1,53 @@
+{
+  "name": "decky-home-assistant",
+  "version": "0.1.0",
+  "description": "Decky companion plugin for the Decky Home Assistant integration: pairing, app list, toasts, PiP and device control",
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c && pnpm run build:player",
+    "watch": "rollup -c -w",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:player": "esbuild src/player/player.ts --bundle --minify --target=chrome100 --outfile=dist/player.js && cp src/player/player.html dist/player.html"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/White-Goblin/steamos-media-control.git"
+  },
+  "keywords": [
+    "decky",
+    "plugin",
+    "home-assistant",
+    "steamos"
+  ],
+  "author": "White-Goblin",
+  "license": "BSD-3-Clause",
+  "bugs": {
+    "url": "https://github.com/White-Goblin/steamos-media-control/issues"
+  },
+  "homepage": "https://github.com/White-Goblin/steamos-media-control#readme",
+  "devDependencies": {
+    "@decky/rollup": "^1.0.2",
+    "@decky/ui": "^4.11.0",
+    "@rollup/rollup-linux-x64-musl": "^4.53.3",
+    "@types/react": "19.1.1",
+    "@types/react-dom": "19.1.1",
+    "@types/webpack": "^5.28.5",
+    "esbuild": "^0.28.2",
+    "rollup": "^4.53.3",
+    "typescript": "^5.6.2"
+  },
+  "dependencies": {
+    "@decky/api": "^1.1.3",
+    "hls.js": "^1.7.3",
+    "react-icons": "^5.3.0",
+    "tslib": "^2.7.0"
+  },
+  "pnpm": {
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "react",
+        "react-dom"
+      ]
+    }
+  }
+}

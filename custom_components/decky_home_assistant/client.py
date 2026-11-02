@@ -1,0 +1,310 @@
+"""Client for the device's LAN protocol: pairing, authenticated session, commands, reconnect.
+
+Independent of Home Assistant: the websocket itself comes from a `Transport` (aiohttp in Home Assistant,
+a stdlib one in tests). See docs/protocol.md.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Protocol
+
+from .proto import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, auth, messages as m, pake
+
+_LOGGER = logging.getLogger(__name__)
+
+HA_ID = "homeassistant"
+CONNECT_TIMEOUT = 10
+COMMAND_TIMEOUT = 30
+BACKOFF_START, BACKOFF_MAX = 2, 300
+
+
+class ConnectionClosed(Exception):
+    """The websocket ended (raised by a Connection)."""
+
+
+class DeviceOffline(Exception):
+    """No authenticated connection to the device right now."""
+
+
+class CommandError(Exception):
+    def __init__(self, code: str, message: str):
+        super().__init__(message)
+        self.code, self.message = code, message
+
+
+class VersionSkew(Exception):
+    """`peer` is "old" (the device plugin needs updating) or "new" (this integration needs updating)."""
+
+    def __init__(self, peer: str):
+        super().__init__(f"device is too {peer}")
+        self.peer = peer
+
+
+class AuthFailed(Exception):
+    """The device rejected the stored secret, is unpaired, or is a different device."""
+
+
+class PairingError(Exception):
+    """`reason` is wrong_code, expired, locked, already_paired, version_skew or protocol."""
+
+    def __init__(self, reason: str, data: dict | None = None):
+        super().__init__(reason)
+        self.reason, self.data = reason, data or {}
+
+
+class Connection(Protocol):
+    async def send(self, text: str) -> None: ...
+    async def recv(self, timeout: float | None = None) -> str: ...  # raises ConnectionClosed, asyncio.TimeoutError
+    async def close(self) -> None: ...
+
+
+class Transport(Protocol):
+    async def connect(self, host: str, port: int) -> Connection: ...
+
+
+async def _recv_frame(conn: Connection, timeout: float | None) -> dict:
+    try:
+        return m.parse(await conn.recv(timeout))
+    except m.ProtocolError as e:
+        raise ConnectionClosed(f"bad frame: {e.message}") from None
+
+
+async def _hello(conn: Connection, own: tuple[int, int]) -> dict:
+    """Read the device's hello, send ours, check the versions."""
+    hello = await _recv_frame(conn, CONNECT_TIMEOUT)
+    if hello["type"] != "hello":
+        raise ConnectionClosed("hello expected")
+    await conn.send(m.encode(m.hello(HA_ID, *own)))
+    try:
+        m.negotiate(own[0], own[1], hello["proto"], hello["min_proto"])
+    except m.ProtocolError as e:
+        raise VersionSkew(e.data["peer"]) from None
+    return hello
+
+
+async def open_session(transport: Transport, host: str, port: int, device_id: str, secret: bytes,
+                       own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION)) -> Connection:
+    """Connect and authenticate with the stored secret. The caller owns the returned connection."""
+    conn = await transport.connect(host, port)
+    try:
+        hello = await _hello(conn, own)
+        if hello["device_id"] != device_id:
+            raise AuthFailed("a different device answered at this address")
+        if not hello.get("paired"):
+            raise AuthFailed("the device is not paired")
+        challenge = await _recv_frame(conn, CONNECT_TIMEOUT)
+        if challenge["type"] == "result" and not challenge["ok"]:
+            err = challenge["error"]
+            if err["code"] == m.VERSION_SKEW:
+                raise VersionSkew(challenge.get("peer") or "old")
+            raise AuthFailed(err.get("message", err["code"]))
+        if challenge["type"] != "challenge":
+            raise ConnectionClosed("challenge expected")
+        nonce_h = auth.make_challenge()
+        await conn.send(m.encode({"type": "proof", "nonce": nonce_h,
+                                  "proof": auth.prove(secret, challenge["nonce"], nonce_h, auth.ROLE_HA)}))
+        reply = await _recv_frame(conn, CONNECT_TIMEOUT)
+        if reply["type"] == "result" and not reply["ok"]:
+            raise AuthFailed(reply["error"].get("message", "authentication failed"))
+        if reply["type"] != "proof" or not auth.verify(secret, challenge["nonce"], nonce_h, auth.ROLE_DEVICE,
+                                                       reply.get("proof")):
+            raise AuthFailed("the device did not prove it knows the secret")
+        return conn
+    except BaseException:
+        await conn.close()
+        raise
+
+
+@dataclass
+class PairResult:
+    device_id: str
+    secret: bytes
+    name: str = ""
+
+
+async def probe(transport: Transport, host: str, port: int) -> dict:
+    """Read a device's hello (device_id, name, paired, protocol) without authenticating."""
+    conn = await transport.connect(host, port)
+    try:
+        hello = await _recv_frame(conn, CONNECT_TIMEOUT)
+        if hello["type"] != "hello":
+            raise ConnectionClosed("hello expected")
+        return hello
+    finally:
+        await conn.close()
+
+
+async def pair(transport: Transport, host: str, port: int, code: str,
+               own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION)) -> PairResult:
+    """Run the pairing exchange with the code shown on the device. Raises PairingError."""
+    conn = await transport.connect(host, port)
+    try:
+        try:
+            hello = await _hello(conn, own)
+        except VersionSkew:
+            raise PairingError("version_skew") from None
+        if hello.get("paired"):
+            raise PairingError("already_paired")
+        await conn.send(m.encode({"type": "pair", "step": "begin"}))
+        challenge = await _pair_reply(conn, "challenge")
+        client = pake.SrpClient(code)
+        try:
+            m1 = client.process(bytes.fromhex(challenge["salt"]), pake.from_hex(challenge["B"]))
+        except (ValueError, KeyError, pake.PakeError):
+            raise PairingError("protocol") from None
+        await conn.send(m.encode({"type": "pair", "step": "proof", "A": pake.to_hex(client.A), "M1": m1.hex()}))
+        done = await _pair_reply(conn, "done")
+        try:
+            client.confirm(bytes.fromhex(done["M2"]))
+        except (ValueError, KeyError, pake.PakeError):
+            raise PairingError("protocol") from None
+        return PairResult(hello["device_id"], client.secret, str(hello.get("name") or ""))
+    except ConnectionClosed:
+        raise PairingError("protocol") from None
+    finally:
+        await conn.close()
+
+
+async def _pair_reply(conn: Connection, step: str) -> dict:
+    frame = await _recv_frame(conn, CONNECT_TIMEOUT)
+    if frame["type"] == "pair" and frame.get("step") == "error":
+        raise PairingError(frame.get("reason") or "protocol", {k: v for k, v in frame.items() if k in ("attempts_left", "retry_in")})
+    if frame["type"] == "pair" and frame.get("step") == step:
+        return frame
+    raise PairingError("protocol")
+
+
+async def send_unpair(transport: Transport, host: str, port: int, device_id: str, secret: bytes) -> None:
+    """Tell a (possibly sleeping) device to forget this pairing. Raises if it cannot be reached."""
+    conn = await open_session(transport, host, port, device_id, secret)
+    try:
+        await conn.send(m.encode(m.cmd(1, "unpair")))
+        for _ in range(50):  # skip the state snapshot until our result arrives
+            frame = await _recv_frame(conn, CONNECT_TIMEOUT)
+            if frame["type"] == "result" and frame["id"] == 1:
+                return
+    finally:
+        await conn.close()
+
+
+class DeckyClient:
+    """Keeps an authenticated session open, delivers state and events, and runs commands."""
+
+    def __init__(self, transport: Transport, host: str, port: int, device_id: str, secret: bytes, *,
+                 on_state: Callable[[str, dict], None], on_event: Callable[[str, dict], None],
+                 on_connection: Callable[[bool], None], on_problem: Callable[[Exception], None] = lambda e: None,
+                 resolver: Callable[[], Awaitable[tuple[str, int] | None]] | None = None,
+                 own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
+                 sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT):
+        self._transport, self.host, self.port = transport, host, port
+        self._device_id, self._secret = device_id, secret
+        self._on_state, self._on_event, self._on_connection, self._on_problem = on_state, on_event, on_connection, on_problem
+        self._resolver, self._own, self._sleep, self._command_timeout = resolver, own, sleep, command_timeout
+        self._conn: Connection | None = None
+        self._pending: dict[int, asyncio.Future] = {}
+        self._next_id = 1
+        self._task: asyncio.Task | None = None
+        self._stopped = False
+
+    @property
+    def connected(self) -> bool:
+        return self._conn is not None
+
+    async def start(self) -> None:
+        self._stopped = False
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        self._stopped = True
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+        self._fail_pending()
+
+    def set_address(self, host: str, port: int) -> None:
+        self.host, self.port = host, port
+
+    async def command(self, name: str, data: dict | None = None) -> dict:
+        """Run a command on the device. Raises DeviceOffline at once when not connected, CommandError on a device error."""
+        conn = self._conn
+        if conn is None:
+            raise DeviceOffline("the device is offline")
+        msg_id, self._next_id = self._next_id, self._next_id + 1
+        future = asyncio.get_running_loop().create_future()
+        self._pending[msg_id] = future
+        try:
+            await conn.send(m.encode(m.cmd(msg_id, name, data)))
+            return await asyncio.wait_for(future, self._command_timeout)
+        except (ConnectionClosed, OSError):
+            raise DeviceOffline("the device is offline") from None
+        except asyncio.TimeoutError:
+            raise CommandError(m.INTERNAL, "the device did not answer in time") from None
+        finally:
+            self._pending.pop(msg_id, None)
+
+    def _fail_pending(self) -> None:
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(DeviceOffline("the device went offline"))
+        self._pending.clear()
+
+    async def _run(self) -> None:
+        delay = BACKOFF_START
+        while not self._stopped:
+            try:
+                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own)
+                self._conn = conn
+                delay = BACKOFF_START
+                self._on_connection(True)
+                await self._read_loop(conn)
+            except asyncio.CancelledError:
+                raise
+            except AuthFailed as e:
+                self._on_problem(e)
+                return  # a wrong secret will not fix itself: wait for re-pairing
+            except VersionSkew as e:
+                self._on_problem(e)
+                delay = max(delay, 60)  # an update fixes this; do not hammer the device
+            except (ConnectionClosed, OSError, asyncio.TimeoutError) as e:
+                _LOGGER.debug("connection to %s:%s failed: %s", self.host, self.port, e)
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("unexpected error in the device connection")
+            finally:
+                if self._conn is not None:
+                    await self._conn.close()
+                    self._conn = None
+                    self._on_connection(False)
+                self._fail_pending()
+            if self._resolver is not None:
+                try:
+                    found = await self._resolver()
+                except Exception:  # noqa: BLE001
+                    found = None
+                if found:
+                    self.set_address(*found)
+            await self._sleep(delay)
+            delay = min(delay * 2, BACKOFF_MAX)
+
+    async def _read_loop(self, conn: Connection) -> None:
+        while True:
+            frame = await _recv_frame(conn, None)
+            kind = frame["type"]
+            if kind == "state":
+                self._on_state(frame["name"], frame["data"])
+            elif kind == "event":
+                self._on_event(frame["name"], frame["data"])
+            elif kind == "result":
+                future = self._pending.get(frame["id"])
+                if future is not None and not future.done():
+                    if frame["ok"]:
+                        future.set_result(frame.get("data", {}))
+                    else:
+                        future.set_exception(CommandError(frame["error"]["code"], frame["error"].get("message", "")))

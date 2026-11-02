@@ -1,0 +1,122 @@
+"""Frame shapes, validation and version negotiation for the LAN protocol (stdlib only)."""
+import json
+
+from . import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
+
+MAX_FRAME_BYTES = 1_000_000
+MAX_NAME_LEN = 64
+
+# Error codes carried in `result.error.code` (and used as exception codes).
+BAD_REQUEST = "bad_request"
+UNAUTHORIZED = "unauthorized"
+BUSY = "busy"
+OFFLINE = "offline"
+NOT_RUNNING = "not_running"
+UNSUPPORTED = "unsupported"
+INTERNAL = "internal"
+VERSION_SKEW = "version_skew"
+ERROR_CODES = (BAD_REQUEST, UNAUTHORIZED, BUSY, OFFLINE, NOT_RUNNING, UNSUPPORTED, INTERNAL, VERSION_SKEW)
+
+FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event")
+
+
+class ProtocolError(Exception):
+    """A frame or exchange violated the protocol. `code` is one of ERROR_CODES."""
+
+    def __init__(self, code: str, message: str = "", data: dict | None = None):
+        super().__init__(message or code)
+        self.code, self.message, self.data = code, message or code, data or {}
+
+
+def _require(cond: bool, message: str) -> None:
+    if not cond:
+        raise ProtocolError(BAD_REQUEST, message)
+
+
+def hello(device_id: str, proto: int = PROTOCOL_VERSION, min_proto: int = MIN_PROTOCOL_VERSION) -> dict:
+    return {"type": "hello", "proto": proto, "min_proto": min_proto, "device_id": device_id}
+
+
+def cmd(msg_id: int, name: str, data: dict | None = None) -> dict:
+    return {"type": "cmd", "id": msg_id, "name": name, "data": data or {}}
+
+
+def result_ok(msg_id: int, data: dict | None = None) -> dict:
+    return {"type": "result", "id": msg_id, "ok": True, "data": data or {}}
+
+
+def result_error(msg_id: int, code: str, message: str = "") -> dict:
+    return {"type": "result", "id": msg_id, "ok": False, "error": {"code": code, "message": message or code}}
+
+
+def state(name: str, data: dict) -> dict:
+    return {"type": "state", "name": name, "data": data}
+
+
+def event(name: str, data: dict | None = None) -> dict:
+    return {"type": "event", "name": name, "data": data or {}}
+
+
+def encode(frame: dict) -> str:
+    text = json.dumps(frame, separators=(",", ":"))
+    if len(text.encode()) > MAX_FRAME_BYTES:
+        raise ProtocolError(BAD_REQUEST, "frame too large")
+    return text
+
+
+def parse(text) -> dict:
+    """Decode and validate one frame; raises ProtocolError(bad_request) on anything malformed."""
+    raw = text.encode() if isinstance(text, str) else bytes(text)
+    _require(len(raw) <= MAX_FRAME_BYTES, "frame too large")
+    try:
+        frame = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        raise ProtocolError(BAD_REQUEST, "invalid JSON") from None
+    _require(isinstance(frame, dict), "frame must be an object")
+    ftype = frame.get("type")
+    _require(ftype in FRAME_TYPES, "unknown frame type")
+    if ftype == "hello":
+        for key in ("proto", "min_proto"):
+            _require(isinstance(frame.get(key), int) and not isinstance(frame.get(key), bool) and frame[key] >= 0,
+                     f"hello.{key} must be a non-negative integer")
+        _require(isinstance(frame.get("device_id"), str) and frame["device_id"], "hello.device_id required")
+    elif ftype == "cmd":
+        _require(_is_id(frame.get("id")), "cmd.id must be a non-negative integer")
+        _require(_is_name(frame.get("name")), "cmd.name invalid")
+        _require(isinstance(frame.get("data", {}), dict), "cmd.data must be an object")
+        frame.setdefault("data", {})
+    elif ftype == "result":
+        _require(_is_id(frame.get("id")), "result.id must be a non-negative integer")
+        _require(isinstance(frame.get("ok"), bool), "result.ok must be a boolean")
+        if not frame["ok"]:
+            err = frame.get("error")
+            _require(isinstance(err, dict) and isinstance(err.get("code"), str), "result.error.code required")
+        else:
+            _require(isinstance(frame.get("data", {}), dict), "result.data must be an object")
+            frame.setdefault("data", {})
+    elif ftype in ("state", "event"):
+        _require(_is_name(frame.get("name")), f"{ftype}.name invalid")
+        _require(isinstance(frame.get("data", {}), dict), f"{ftype}.data must be an object")
+        frame.setdefault("data", {})
+    return frame
+
+
+def _is_id(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _is_name(value) -> bool:
+    return isinstance(value, str) and 0 < len(value) <= MAX_NAME_LEN
+
+
+def negotiate(own: int, own_min: int, peer: int, peer_min: int) -> int:
+    """Return the protocol version both sides speak, or raise ProtocolError(version_skew).
+
+    Each side accepts its own version and the previous one; ranges must overlap.
+    `data["peer"]` is "old" when the other side is too old (update it) or "new" when it is too new.
+    """
+    if peer < own_min:
+        raise ProtocolError(VERSION_SKEW, "the other side is too old", {"peer": "old"})
+    if peer_min > own:
+        raise ProtocolError(VERSION_SKEW, "the other side is too new", {"peer": "new"})
+    return min(own, peer)
