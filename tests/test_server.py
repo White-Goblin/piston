@@ -71,8 +71,9 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         await c.send({"type": "proof", "nonce": nh, "proof": auth.prove(SECRET, challenge["nonce"], nh, auth.ROLE_HA)})
         proof = await c.recv()
         self.assertTrue(auth.verify(SECRET, challenge["nonce"], nh, auth.ROLE_DEVICE, proof["proof"]))
-        self.assertEqual((await c.recv())["type"], "state")
-        self.assertEqual((await c.recv())["type"], "state")
+        self.snapshot_frames = [await c.recv(), await c.recv()]
+        for frame in self.snapshot_frames:
+            self.assertEqual(frame["type"], "state")
         return c
 
     async def test_non_websocket_request_is_refused(self):
@@ -141,6 +142,69 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.server.push_event("toast_click", {"id": "a"})
         self.assertEqual((await c.recv())["name"], "sensors")
         self.assertEqual((await c.recv())["name"], "toast_click")
+
+    async def test_snapshot_frames_carry_boot_id_and_seq_one(self):
+        await self.login()
+        self.assertEqual(len(self.server.boot_id), 16)
+        self.assertEqual([(f["name"], f["boot_id"], f["seq"]) for f in self.snapshot_frames],
+                         [("device", self.server.boot_id, 1), ("apps", self.server.boot_id, 1)])
+
+    async def test_pushes_count_per_group_and_keep_the_boot_id(self):
+        c = await self.login()
+        for _ in range(2):
+            self.server.push_state("sensors", {"cpu": 1})
+        self.server.push_state("apps", {"running": True})
+        frames = [await c.recv() for _ in range(3)]
+        self.assertEqual([(f["name"], f["seq"]) for f in frames], [("sensors", 1), ("sensors", 2), ("apps", 2)])
+        self.assertEqual({f["boot_id"] for f in frames}, {self.server.boot_id})
+
+    async def test_snapshot_does_not_count_as_a_push(self):
+        self.server.push_state("device", {"name": "x"})   # pushed once while nobody was connected
+        await self.login()
+        self.assertEqual({f["name"]: f["seq"] for f in self.snapshot_frames}, {"device": 1, "apps": 1})
+        self.server.push_state("device", {"name": "y"})
+        self.server.push_state("apps", {"running": True})
+        self.assertEqual(self.server._seq, {"device": 2, "apps": 2})
+
+    async def test_resync_answers_ok_then_sends_every_group_as_new_pushes(self):
+        c = await self.login()                       # snapshot: device seq 1, apps seq 1
+        await c.send({"type": "cmd", "id": 5, "name": "resync"})
+        self.assertEqual(await c.recv(), {"type": "result", "id": 5, "ok": True, "data": {}})
+        frames = [await c.recv(), await c.recv()]
+        self.assertEqual([(f["type"], f["name"], f["seq"], f["boot_id"]) for f in frames],
+                         [("state", "device", 2, self.server.boot_id), ("state", "apps", 2, self.server.boot_id)])
+        self.assertEqual(frames[0]["data"], {"name": "x"})
+
+    async def test_two_queued_resyncs_send_one_snapshot(self):
+        c = await self.login()
+        await c.send({"type": "cmd", "id": 1, "name": "slow"})      # occupies the worker
+        await c.send({"type": "cmd", "id": 2, "name": "resync"})
+        await c.send({"type": "cmd", "id": 3, "name": "resync"})
+        dup = await c.recv()
+        self.assertEqual((dup["id"], dup["ok"], dup["data"]), (3, True, {"coalesced": True}))
+        self.release.set()
+        self.assertEqual((await c.recv())["id"], 1)
+        self.assertEqual((await c.recv())["id"], 2)
+        self.assertEqual([(await c.recv())["type"], (await c.recv())["type"]], ["state", "state"])
+        await c.send({"type": "cmd", "id": 9, "name": "ok"})          # the next frame must be this result, not a second snapshot
+        self.assertEqual((await c.recv())["id"], 9)
+
+    async def test_resync_after_a_finished_resync_runs_again(self):
+        c = await self.login()
+        for i in (1, 2):
+            await c.send({"type": "cmd", "id": i, "name": "resync"})
+            self.assertEqual((await c.recv())["id"], i)
+            self.assertEqual([(await c.recv())["type"], (await c.recv())["type"]], ["state", "state"])
+
+    async def test_shutting_down_event_reaches_the_peer(self):
+        c = await self.login()
+        self.server.push_event("shutting_down", {"reason": "shutdown"})
+        event = await c.recv()
+        self.assertEqual((event["type"], event["name"], event["data"]), ("event", "shutting_down", {"reason": "shutdown"}))
+
+    async def test_each_server_run_has_its_own_boot_id(self):
+        other = ProtocolServer(device_id=lambda: "d", secret=lambda: b"", pairing=None, commands={}, snapshot=lambda: {})
+        self.assertNotEqual(other.boot_id, self.server.boot_id)
 
     async def test_silent_peer_is_dropped(self):
         c = await self.login()

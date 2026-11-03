@@ -1,5 +1,7 @@
+import socket
 import struct
 import unittest
+from unittest import mock
 
 from decky_ha import mdns
 from decky_ha.advertise import Advertiser
@@ -113,7 +115,75 @@ class AdvertiserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(FakeLow.instances[0].events, ["start", "stop"])
 
 
+class FailedStartTests(unittest.IsolatedAsyncioTestCase):
+    """After a resume the first start fails with 'Network is unreachable'; nothing may be left behind."""
+
+    def adv(self):
+        return mdns.MdnsAdvertiser("_deckyha._tcp.local.", "abc123", "abc123.local.", 47830, "192.168.1.5", {"device_id": "abc123"})
+
+    def test_a_failed_open_closes_the_socket(self):
+        closed = []
+
+        class Sock:
+            def __init__(self, *args):
+                pass
+
+            def setsockopt(self, level, option, value):
+                if option == socket.IP_ADD_MEMBERSHIP:
+                    raise OSError(101, "Network is unreachable")
+
+            def bind(self, address):
+                pass
+
+            def close(self):
+                closed.append(1)
+
+        with mock.patch.object(mdns.socket, "socket", Sock):
+            with self.assertRaises(OSError):
+                self.adv()._open()
+        self.assertEqual(closed, [1])
+
+    async def test_a_failed_announcement_closes_the_socket(self):
+        closed = []
+
+        class Sock:
+            def close(self):
+                closed.append(1)
+
+        adv = self.adv()
+
+        async def fail(packet, times=2):
+            raise OSError(101, "Network is unreachable")
+
+        adv._open = lambda: Sock()
+        adv._announce = fail
+        with self.assertRaises(OSError):
+            await adv.start()
+        self.assertEqual((closed, adv.sock), ([1], None))
+
+
 class RobustStopTests(unittest.IsolatedAsyncioTestCase):
+    async def test_advertising_follows_the_state_and_a_failed_start_is_retried(self):
+        FakeLow.instances = []
+        attempts = []
+
+        class Flaky(FakeLow):
+            async def start(self):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise OSError(101, "Network is unreachable")
+
+        ip = {"v": "10.0.0.2"}
+        adv = Advertiser(lambda: {"device_id": "abc123", "name": "box", "paired": False}, 47830, lambda: ip["v"], Flaky)
+        self.assertFalse(adv.advertising)
+        await adv.sync()
+        self.assertFalse(adv.advertising)          # the first start failed
+        await adv.restart()
+        self.assertTrue(adv.advertising)           # and a restart after the failure works
+        ip["v"] = None
+        await adv.sync()
+        self.assertFalse(adv.advertising)
+
     async def test_a_failing_goodbye_does_not_wedge_the_advertiser(self):
         class Boom(FakeLow):
             async def stop(self):

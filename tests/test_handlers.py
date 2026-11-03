@@ -128,6 +128,23 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.h.events[0][0], "going_to_sleep")
         self.assertEqual(self.emitted("power"), [{"action": "suspend"}])
 
+    async def test_suspend_carries_the_reason(self):
+        with mock.patch("decky_ha.control.SLEEP_FLUSH_SECONDS", 0):
+            await self.h._cmd_power({"action": "suspend"})
+        self.assertEqual(self.h.events, [("going_to_sleep", {"reason": "suspend"})])
+
+    async def test_suspend_does_not_announce_itself_when_logind_does(self):
+        self.h.lifecycle = mock.Mock(active=True, protecting=True)
+        await self.h._cmd_power({"action": "suspend"})         # no SLEEP_FLUSH patch needed: it must not wait either
+        self.assertEqual(self.h.events, [])
+        self.assertEqual(self.emitted("power"), [{"action": "suspend"}])
+
+    async def test_suspend_announces_itself_when_logind_cannot_protect_it(self):
+        self.h.lifecycle = mock.Mock(active=True, protecting=False)
+        with mock.patch("decky_ha.control.SLEEP_FLUSH_SECONDS", 0):
+            await self.h._cmd_power({"action": "suspend"})
+        self.assertEqual([e[0] for e in self.h.events], ["going_to_sleep"])
+
     async def test_restart_actions_are_forwarded(self):
         for action in ("restart", "shutdown", "restart_steam"):
             await self.h._cmd_power({"action": action})

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_platform
 
 from ._compat import vol
@@ -11,7 +11,10 @@ from .const import (
     OPT_PIP_CAMERAS, OPT_PIP_DURATION, OPT_PIP_MUTE, OPT_PIP_POSITION, OPT_PIP_SIZE, PIP_DURATIONS, PIP_POSITIONS,
     PIP_SIZES,
 )
-from .entity import DeckyEntity
+from .entity import DeckyEntity, command_failure
+
+# One PiP camera change at a time.
+PARALLEL_UPDATES = 1
 
 OFF = "Off"
 ACTIVE_STATES = ("loading", "connecting", "negotiating", "playing")
@@ -80,22 +83,18 @@ class PipCameraSelect(DeckyEntity, SelectEntity):
             return
         camera = self._cameras.get(option)
         if camera is None:
-            raise HomeAssistantError(f"{option} is not one of the PiP cameras (choose cameras in the integration options)")
+            raise ServiceValidationError(f"{option} is not one of the PiP cameras (choose cameras in the integration options)")
         await self.async_show_pip(camera=camera)
 
     async def async_show_pip(self, camera: str, position=None, size=None, duration=None, mute=None) -> None:
         overrides = {"position": position, "size": size, "duration": duration, "mute": mute}
         try:
             await self.coordinator.pip.async_show(camera, pip_options(self.coordinator.options, overrides))
-        except DeviceOffline:
-            raise HomeAssistantError("The device is offline") from None
-        except CommandError as e:
-            raise HomeAssistantError(e.message or e.code) from None
+        except (DeviceOffline, CommandError) as e:
+            raise command_failure(e) from None
 
     async def async_hide_pip(self) -> None:
         try:
             await self.coordinator.pip.async_hide()
-        except DeviceOffline:
-            raise HomeAssistantError("The device is offline") from None
-        except CommandError as e:
-            raise HomeAssistantError(e.message or e.code) from None
+        except (DeviceOffline, CommandError) as e:
+            raise command_failure(e) from None

@@ -128,6 +128,29 @@ class DeckyConfigFlow(ConfigFlow, domain=DOMAIN):
             return await self.async_step_pair()
         return self.async_show_form(step_id="reauth_confirm", description_placeholders={"name": self._name})
 
+    # --- changing the address ----------------------------------------------
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Point the entry at a new address (the device moved and mDNS does not reach Home Assistant).
+        The pairing is kept: only the host and port change, and only for the same device."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            host, port = user_input[CONF_HOST].strip(), user_input[CONF_PORT]
+            try:
+                hello = await probe(make_transport(self.hass), host, port)
+            except (OSError, ConnectionClosed, asyncio.TimeoutError):
+                errors["base"] = "cannot_connect"
+            else:
+                if hello["device_id"] != entry.data[CONF_DEVICE_ID]:
+                    return self.async_abort(reason="wrong_device")
+                return self.async_update_reload_and_abort(entry, data_updates={CONF_HOST: host, CONF_PORT: port})
+        current_host = (user_input or entry.data).get(CONF_HOST, entry.data[CONF_HOST])
+        current_port = (user_input or entry.data).get(CONF_PORT, entry.data.get(CONF_PORT, DEFAULT_PORT))
+        schema = vol.Schema({vol.Required(CONF_HOST, default=current_host): str, vol.Required(CONF_PORT, default=current_port): int})
+        return self.async_show_form(step_id="reconfigure", data_schema=schema, errors=errors,
+                                    description_placeholders={"name": entry.data.get(CONF_NAME) or "the device"})
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:

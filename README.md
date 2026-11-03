@@ -26,8 +26,6 @@ Actions (Developer tools, automations and scripts):
 - `decky_home_assistant.show_pip` on the PiP camera entity: `camera` (any camera entity) and optional `position`, `size`, `duration` and `mute`, overriding the options for that call. A new camera replaces the one showing.
 - `decky_home_assistant.hide_pip` on the PiP camera entity.
 
-Options (Settings > Devices & services > Decky Home Assistant > Configure): **What turning off does** (sleep or shut down), **Sensor update interval (seconds)**, **PiP cameras** (the list the PiP camera selector offers), **PiP position**, **PiP size**, **PiP hide after** (a time, or until hidden) and **Mute PiP**.
-
 ## Install
 
 1. **Integration.** In HACS open the menu, choose Custom repositories, add `https://github.com/White-Goblin/steamos-media-control` as category Integration, then download Decky Home Assistant and restart Home Assistant.
@@ -37,6 +35,32 @@ Options (Settings > Devices & services > Decky Home Assistant > Configure): **Wh
 5. **Wake on LAN** (to turn the device on from Home Assistant). Set this up on the device yourself, see [Wake on LAN](#wake-on-lan) below.
 
 Home Assistant and the device must be on the same network segment because the device is found with mDNS, and Home Assistant needs to reach the device on TCP port 47830.
+
+## Setup parameters
+
+Setting up needs no typing when the device is found automatically: you confirm it and enter the pairing code. If Home Assistant cannot see the device (for example it is on another VLAN), add it by address instead:
+
+| Parameter | Meaning |
+|---|---|
+| Host or IP address | The address of the device, for example `192.168.1.20`. Only asked when you add the device by address. |
+| Port | The port the plugin listens on. Default `47830`; only change it if you changed it on the device. |
+| Pairing code | The 6 digits shown in the plugin panel on the device, valid for five minutes. Five wrong codes lock pairing for a minute. |
+
+To change the address later (the device got a new IP address and Home Assistant does not find it by itself) use the three-dot menu of the integration entry > Reconfigure. The pairing is kept.
+
+## Options
+
+Settings > Devices & services > Decky Home Assistant > Configure:
+
+| Option | Default | What it does |
+|---|---|---|
+| What turning off does | Sleep | Sleep suspends the device (Wake on LAN brings it back); Shutdown powers it off (most devices need the power button to start again). |
+| Sensor update interval (seconds) | 10 | How often the device reports temperatures, load and battery: 10, 30, 60 or 300. Longer uses a little less power. |
+| PiP cameras | none | The cameras the PiP camera selector offers. The `show_pip` action works with any camera. |
+| PiP position | Top right | Where the camera picture appears by default (top, top right, right, bottom right, bottom, bottom left, left, top left). |
+| PiP size | Medium | Small, medium, large or extra large (a share of the screen width). |
+| PiP hide after | 30 seconds | 10, 20, 30, 60 or 300 seconds, or until hidden. The `show_pip` action can override it. |
+| Mute PiP | On | Start camera pictures without sound. |
 
 ## Wake on LAN
 
@@ -56,7 +80,12 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 
 ## Notes
 
-- **Sleep.** When the device goes to sleep the media player shows standby and the other entities become unavailable; Turn on sends a magic packet and everything comes back after the wake.
+- **Sleep and shutdown.** The device announces every way it goes down: the power button, the idle timer, Home Assistant and the Steam menu. The media player then shows standby (sleep) or off (shutdown) and the other entities become unavailable. Turn on sends a magic packet and everything comes back after the wake.
+- **Waking up.** Home Assistant picks the device up again as soon as it announces itself on the network, and the device re-reads its real state first (a game that ended while it slept does not linger). How soon that is depends on how fast the device's network returns after a wake: a wired link can take ten seconds or more.
+- **What the media player shows.** Idle, playing or paused while the device is awake; standby after a sleep; off after a shutdown or when it cannot be reached; unavailable only for a problem Home Assistant cannot fix by waiting (the device no longer accepts the pairing, or the plugin and the integration versions do not match). The media player stays available while the device is off so that Turn on works.
+- **After a Home Assistant restart.** Home Assistant remembers the apps, controllers and sensors, so the entities exist at once; their values are unknown and the media player shows off until the device reports.
+- **Repairs.** If Home Assistant cannot reach the device for more than 24 hours a Repairs item says so. It goes away by itself when the device connects; if the device is normally switched off you can ignore it.
+- **Diagnostics.** The device page has a Download diagnostics button. The file hides the pairing secret, addresses, MAC addresses, controller serial numbers and the network name, so it is safe to attach to an issue.
 - **Desktop mode.** The plugin keeps running there, so the switch and the sensors keep working. Anything that needs the Steam interface (launching apps, toasts, picture-in-picture, suspend, restart) answers that it only works in game mode.
 - **Volume.** With a soundbar or TV on HDMI CEC you get volume steps and an assumed mute (CEC has no readable level). Otherwise the media player has a real level and mute from the system mixer. This is detected automatically.
 - **Camera picture-in-picture.** H.264 cameras play over WebRTC; cameras Home Assistant's WebRTC cannot carry (for example H.265) fall back to HLS automatically. Unmuted video works; the overlay is dropped when the device sleeps.

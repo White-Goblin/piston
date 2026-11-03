@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from unittest import mock
 
-from . import fake as fake_decky, use_temp_settings_dir, wsclient
+from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir, wsclient
 from decky_ha import server as server_module
 from decky_ha.proto import PROTOCOL_VERSION, auth, messages as m, pake
 import main
@@ -10,6 +10,7 @@ import main
 
 class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        StubLifecycle.instances.clear()
         use_temp_settings_dir()
         fake_decky.emitted.clear()
         self.plugin = main.Plugin()
@@ -22,11 +23,32 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(main.Plugin, "_start_http_server", mock.AsyncMock()),
             mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 30, "muted": False}),
         ]
-        for p in patches:
+        for p in patches + plugin_environment_patches():
             p.start()
             self.addCleanup(p.stop)
         await self.plugin._main()
         self.addAsyncCleanup(self.plugin._unload)
+
+    async def test_lifecycle_is_started_with_the_plugin_and_stopped_on_unload(self):
+        (lifecycle,) = StubLifecycle.instances
+        self.assertTrue(lifecycle.started)
+        self.assertIs(self.plugin.lifecycle, lifecycle)
+        self.assertFalse(lifecycle.stopped)
+        with mock.patch.object(self.plugin, "_stop_lifecycle", wraps=self.plugin._stop_lifecycle) as stop:
+            await self.plugin._unload()
+            await self.plugin._unload()            # the cleanup unloads again later; that must stay harmless
+        self.assertEqual(stop.await_count, 2)
+        self.assertTrue(lifecycle.stopped)
+
+    async def test_lifecycle_callbacks_send_the_events_to_the_integration(self):
+        (lifecycle,) = StubLifecycle.instances
+        sent, flushed = [], []
+        self.plugin.server.push_event = lambda name, data=None: sent.append((name, data))
+        self.plugin.server.flush = mock.AsyncMock(side_effect=lambda: flushed.append(1))
+        await lifecycle.callbacks["on_sleep"]()
+        await lifecycle.callbacks["on_shutdown"]("restart")
+        self.assertEqual(sent, [("going_to_sleep", {"reason": "suspend"}), ("shutting_down", {"reason": "restart"})])
+        self.assertEqual(len(flushed), 2)                      # each was flushed before returning
 
     async def test_starts_unpaired_with_a_pairing_code(self):
         status = await self.plugin.get_status()

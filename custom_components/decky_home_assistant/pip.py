@@ -38,7 +38,10 @@ def default_base_url(hass) -> str:
     try:
         return get_url(hass, allow_external=False, allow_cloud=False, prefer_external=False).rstrip("/")
     except NoURLAvailableError:
-        return f"http://{hass.config.api.local_ip}:{hass.config.api.port}"
+        api = hass.config.api
+        if api is None:  # the web server is not running, so there is no local address to offer either
+            raise RuntimeError("Home Assistant has no internal URL; set one in Settings > System > Network") from None
+        return f"http://{api.local_ip}:{api.port}"
 
 
 class PipRelay:

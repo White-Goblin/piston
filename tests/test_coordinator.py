@@ -4,6 +4,7 @@ from unittest import mock
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.issue_registry import IssueRegistry
 
 import custom_components.decky_home_assistant as integration
@@ -43,6 +44,84 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.coord.power, sensor.is_on), ("on", True))
         self.coord.on_connection(False)
         self.assertFalse(sensor.is_on)
+
+    # --- power model: shutdown announcement, silent loss, logging, last_connected ----------
+
+    LOGGER = "custom_components.decky_home_assistant.coordinator"
+
+    async def test_a_shutdown_announcement_is_off_at_once_without_waiting_for_the_timeout(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("shutting_down", {"reason": "shutdown"})
+        self.assertEqual((self.coord.power, self.coord.sleeping), ("off", False))
+        self.assertIsNone(self.coord._off_handle)
+        self.coord.on_connection(False)                    # the connection then drops: still off, no timer to start
+        self.assertEqual(self.coord.power, "off")
+        self.assertIsNone(self.coord._off_handle)
+
+    async def test_a_shutdown_while_asleep_is_off(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("going_to_sleep", {})
+        self.coord.on_event("shutting_down", {"reason": "restart"})
+        self.assertEqual((self.coord.power, self.coord.sleeping), ("off", False))
+
+    async def test_a_connection_after_a_shutdown_is_on_again(self):
+        self.coord.on_event("shutting_down", {"reason": "shutdown"})
+        self.coord.on_connection(True)
+        self.assertEqual(self.coord.power, "on")
+
+    async def test_standby_after_a_sleep_announcement_does_not_start_the_off_timer(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("going_to_sleep", {})
+        self.coord.on_connection(False)
+        self.assertEqual(self.coord.power, "standby")
+        self.assertIsNone(self.coord._off_handle)
+
+    async def test_a_silent_drop_becomes_off_after_the_timeout(self):
+        self.coord.on_connection(True)
+        self.coord.on_connection(False)
+        self.assertEqual(self.coord.power, "on")           # kept until the timeout
+        self.assertIsNotNone(self.coord._off_handle)
+        await asyncio.sleep(0.25)
+        self.assertEqual(self.coord.power, "off")
+
+    async def test_unavailable_and_back_online_are_each_logged_once(self):
+        with self.assertLogs(self.LOGGER, "INFO") as logs:
+            self.coord.on_connection(True)
+            self.coord.on_event("going_to_sleep", {})      # unavailable (standby)
+            self.coord.on_connection(False)
+            self.coord.on_event("shutting_down", {})       # standby -> off: not logged again
+            await asyncio.sleep(0.25)
+            self.coord.on_connection(True)                 # back online
+            self.coord.on_connection(True)
+        messages = [m.split(":", 2)[-1] for m in logs.output]
+        self.assertEqual(sum("unavailable" in m for m in messages), 1)
+        self.assertEqual(sum("back online" in m for m in messages), 1)
+
+    async def test_after_shutdown_a_late_connection_loss_starts_no_timer(self):
+        self.coord.on_connection(True)
+        self.coord.shutdown()
+        self.coord.on_connection(False)                    # what stopping the client reports while unloading
+        self.assertIsNone(self.coord._off_handle)
+
+    async def test_a_second_outage_is_logged_again(self):
+        with self.assertLogs(self.LOGGER, "INFO") as logs:
+            for _ in range(2):
+                self.coord.on_connection(True)
+                self.coord.on_event("going_to_sleep", {})
+        self.assertEqual(sum("unavailable" in m for m in logs.output), 2)
+        self.assertEqual(sum("back online" in m for m in logs.output), 1)
+
+    async def test_last_connected_is_the_last_moment_there_was_a_connection(self):
+        from datetime import datetime, timezone
+        clock = [datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc)]
+        coord = DeckyCoordinator(self.hass, entry(), off_timeout=0.1, now=lambda: clock[0])
+        self.addCleanup(coord.shutdown)
+        self.assertIsNone(coord.last_connected)
+        coord.on_connection(True)
+        self.assertEqual(coord.last_connected, clock[0])
+        clock[0] = datetime(2026, 11, 6, 8, 0, tzinfo=timezone.utc)      # three days connected, then it drops
+        coord.on_connection(False)
+        self.assertEqual(coord.last_connected, clock[0])                  # not the start of the connection
 
     async def test_sleep_announcement_gives_standby_immediately(self):
         self.coord.on_connection(True)
@@ -136,6 +215,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
 class SetupTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        Store.reset()
         self.box = {"secret": SECRET}
         self.mgr = PairingManager(lambda: self.box["secret"], lambda s: self.box.update(secret=s))
         self.received = []
@@ -204,6 +284,52 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(lambda: self.entry.runtime_data.connected)
         self.assertTrue(await integration.async_unload_entry(self.hass, self.entry))
         self.assertFalse(self.entry.runtime_data.client.connected)
+
+    async def test_stable_state_is_stored_after_the_delay_and_not_for_every_reading(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        coord = self.entry.runtime_data
+        await self.wait_for(lambda: coord.connected and coord.groups.get("device"))
+        coord.on_state("sensors", {"cpu_load": 1})
+        delays = len(Store.delays)
+        for load in range(2, 12):
+            coord.on_state("sensors", {"cpu_load": load})        # readings change, the sensor keys do not
+        self.assertEqual(len(Store.delays), delays)
+        await coord.store._store.fire_delay()
+        key, data = Store.writes[-1]
+        self.assertEqual(key, "decky_home_assistant.e1")
+        self.assertEqual(data["groups"]["sensors"], {"keys": ["cpu_load"]})
+        self.assertEqual(data["groups"]["device"]["mac"], "aa:bb:cc:dd:ee:ff")
+
+    async def test_unload_saves_at_once_while_the_connection_state_is_known(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        await self.wait_for(lambda: self.entry.runtime_data.connected)
+        before = len(Store.writes)
+        await integration.async_unload_entry(self.hass, self.entry)
+        self.assertEqual(len(Store.writes), before + 1)
+        self.assertIsNotNone(Store.writes[-1][1]["last_connected"])      # connected at that moment: now
+
+    async def test_stopping_home_assistant_saves(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        await self.wait_for(lambda: self.entry.runtime_data.connected)
+        before = len(Store.writes)
+        await self.hass.bus.fire("homeassistant_stop")
+        self.assertEqual(len(Store.writes), before + 1)
+
+    async def test_removing_the_entry_deletes_its_stored_state(self):
+        Store.files["decky_home_assistant.e1"] = {"version": 1, "data": {"groups": {}}}
+        await integration.async_remove_entry(self.hass, self.entry)
+        self.assertNotIn("decky_home_assistant.e1", Store.files)
+
+    async def test_removing_the_entry_also_removes_the_unreachable_issue(self):
+        await integration.async_remove_entry(self.hass, self.entry)
+        self.assertIn("device_unreachable_dev123abc456", IssueRegistry.deleted)
+
+    async def test_setup_starts_the_unreachable_monitor(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        self.assertIsNotNone(self.entry.runtime_data.unreachable)
 
     async def test_removing_the_entry_resets_the_device(self):
         await integration.async_remove_entry(self.hass, self.entry)

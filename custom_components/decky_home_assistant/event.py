@@ -6,6 +6,9 @@ from homeassistant.components.event import EventEntity
 from .entity import DeckyEntity
 
 
+# Read-only and fed by pushes: nothing to limit.
+PARALLEL_UPDATES = 0
+
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([ToastClickEvent(entry.runtime_data)])
 

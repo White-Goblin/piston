@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol
 
@@ -17,7 +18,13 @@ _LOGGER = logging.getLogger(__name__)
 HA_ID = "homeassistant"
 CONNECT_TIMEOUT = 10
 COMMAND_TIMEOUT = 30
-BACKOFF_START, BACKOFF_MAX = 2, 300
+# Reconnect policy: a device that sleeps or is off is probed often right after it went away (a wake is the usual
+# reason it comes back) and less often once it has been gone for a while. Protocol errors have their own delays.
+PROBE_FAST_SECONDS, PROBE_SLOW_SECONDS, PROBE_FAST_WINDOW = 5, 30, 600
+VERSION_SKEW_DELAY = 60
+PROBE_CONNECT_TIMEOUT = 2   # a sleeping host does not answer a connect; do not wait for the OS to give up
+RESOLVE_INTERVAL = 60       # the mDNS lookup can take 3 s when the device is away, so not on every probe
+RESYNC_MIN_INTERVAL = 5  # seconds between resync requests
 
 
 class ConnectionClosed(Exception):
@@ -85,9 +92,10 @@ async def _hello(conn: Connection, own: tuple[int, int]) -> dict:
 
 
 async def open_session(transport: Transport, host: str, port: int, device_id: str, secret: bytes,
-                       own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION)) -> Connection:
+                       own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
+                       connect_timeout: float | None = None) -> Connection:
     """Connect and authenticate with the stored secret. The caller owns the returned connection."""
-    conn = await transport.connect(host, port)
+    conn = await asyncio.wait_for(transport.connect(host, port), connect_timeout)
     try:
         hello = await _hello(conn, own)
         if hello["device_id"] != device_id:
@@ -197,7 +205,8 @@ class DeckyClient:
                  on_connection: Callable[[bool], None], on_problem: Callable[[Exception], None] = lambda e: None,
                  resolver: Callable[[], Awaitable[tuple[str, int] | None]] | None = None,
                  own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
-                 sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT):
+                 sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT,
+                 clock: Callable[[], float] = time.monotonic):
         self._transport, self.host, self.port = transport, host, port
         self._device_id, self._secret = device_id, secret
         self._on_state, self._on_event, self._on_connection, self._on_problem = on_state, on_event, on_connection, on_problem
@@ -207,6 +216,16 @@ class DeckyClient:
         self._next_id = 1
         self._task: asyncio.Task | None = None
         self._stopped = False
+        self._clock = clock
+        self._boot_id: str | None = None  # sequencing, reset on every connection
+        self._last_seq: dict[str, int] = {}
+        self._resync_task: asyncio.Task | None = None
+        self._last_resync = float("-inf")
+        self._wake = asyncio.Event()      # set by wake(): the device was seen again, do not wait for the next probe
+        self._attempting = False
+        self._lost_at = self._clock()
+        self.failed_attempts = 0          # consecutive failed attempts since the last connection (for diagnostics)
+        self._last_resolve = float("-inf")
 
     @property
     def connected(self) -> bool:
@@ -224,6 +243,8 @@ class DeckyClient:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._resync_task is not None:
+            self._resync_task.cancel()
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
@@ -231,6 +252,26 @@ class DeckyClient:
 
     def set_address(self, host: str, port: int) -> None:
         self.host, self.port = host, port
+
+    @property
+    def boot_id(self) -> str | None:
+        return self._boot_id
+
+    @property
+    def probe_mode(self) -> str:
+        """"connected", "fast" or "slow" (the probe cadence), or "stopped" when probing ended (rejected secret)."""
+        if self._conn is not None:
+            return "connected"
+        if self._task is not None and self._task.done():
+            return "stopped"
+        return "fast" if self._clock() - self._lost_at < PROBE_FAST_WINDOW else "slow"
+
+    def wake(self) -> None:
+        """The device was seen on the network (its mDNS announcement): connect now instead of at the next probe.
+
+        Never starts a second attempt: during one, the signal is kept and the next attempt follows at once if it fails."""
+        if self._conn is None:   # while connected there is nothing to hurry
+            self._wake.set()
 
     async def command(self, name: str, data: dict | None = None) -> dict:
         """Run a command on the device. Raises DeviceOffline at once when not connected, CommandError on a device error."""
@@ -256,13 +297,34 @@ class DeckyClient:
                 future.set_exception(DeviceOffline("the device went offline"))
         self._pending.clear()
 
+    def _probe_delay(self, lost_at: float) -> float:
+        return PROBE_FAST_SECONDS if self._clock() - lost_at < PROBE_FAST_WINDOW else PROBE_SLOW_SECONDS
+
+    async def _wait(self, delay: float) -> None:
+        """Wait for the next attempt: the delay, or a wake() whichever comes first (a wake kept from during the last attempt skips it)."""
+        if self._wake.is_set():
+            self._wake.clear()
+            return
+        sleeper = asyncio.ensure_future(self._sleep(delay))
+        waker = asyncio.ensure_future(self._wake.wait())
+        try:
+            await asyncio.wait({sleeper, waker}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            sleeper.cancel()
+            waker.cancel()
+        self._wake.clear()
+
     async def _run(self) -> None:
-        delay = BACKOFF_START
+        lost_at = self._lost_at = self._clock()  # the fast probing window starts when we start or lose the device
         while not self._stopped:
+            delay = None
+            self._attempting = True
             try:
-                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own)
+                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own,
+                                          PROBE_CONNECT_TIMEOUT)
                 self._conn = conn
-                delay = BACKOFF_START
+                self._boot_id, self._last_seq = None, {}
+                self.failed_attempts = 0
                 self._on_connection(True)
                 await self._read_loop(conn)
             except asyncio.CancelledError:
@@ -272,33 +334,68 @@ class DeckyClient:
                 return  # a wrong secret will not fix itself: wait for re-pairing
             except VersionSkew as e:
                 self._on_problem(e)
-                delay = max(delay, 60)  # an update fixes this; do not hammer the device
+                delay = VERSION_SKEW_DELAY  # an update fixes this; do not hammer the device
             except (ConnectionClosed, OSError, asyncio.TimeoutError) as e:
                 _LOGGER.debug("connection to %s:%s failed: %s", self.host, self.port, e)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("unexpected error in the device connection")
             finally:
+                self._attempting = False
                 if self._conn is not None:
                     await self._conn.close()
                     self._conn = None
+                    lost_at = self._lost_at = self._clock()
                     self._on_connection(False)
+                else:
+                    self.failed_attempts += 1
                 self._fail_pending()
-            if self._resolver is not None:
+            if self._resolver is not None and self._clock() - self._last_resolve >= RESOLVE_INTERVAL:
+                self._last_resolve = self._clock()
                 try:
                     found = await self._resolver()
                 except Exception:  # noqa: BLE001
                     found = None
                 if found:
                     self.set_address(*found)
-            await self._sleep(delay)
-            delay = min(delay * 2, BACKOFF_MAX)
+            await self._wait(delay if delay is not None else self._probe_delay(lost_at))
+
+    def _apply_state(self, frame: dict) -> None:
+        """Deliver a state frame unless it is stale; a gap in a group's seq is applied, then repaired by one resync.
+
+        The first frame of a group on a connection (the snapshot) and any frame of a new boot_id are taken as they come."""
+        name, boot_id, seq = frame["name"], frame["boot_id"], frame["seq"]
+        if boot_id != self._boot_id:
+            self._boot_id, self._last_seq = boot_id, {}
+        last = self._last_seq.get(name)
+        if last is not None and seq <= last:
+            _LOGGER.debug("dropping stale %s frame (seq %s, have %s)", name, seq, last)
+            return
+        gap = last is not None and seq != last + 1
+        self._last_seq[name] = seq
+        self._on_state(name, frame["data"])
+        if gap:
+            _LOGGER.debug("gap in %s (seq %s after %s): requesting a resync", name, seq, last)
+            self._request_resync()
+
+    def _request_resync(self) -> None:
+        now = self._clock()
+        if (self._resync_task is not None and not self._resync_task.done()) or now - self._last_resync < RESYNC_MIN_INTERVAL:
+            return
+        self._last_resync = now
+        self._resync_task = asyncio.get_running_loop().create_task(self._resync())
+
+    async def _resync(self) -> None:
+        try:
+            await self.command("resync")
+        except (DeviceOffline, CommandError) as e:
+            _LOGGER.debug("resync failed: %s", e)
 
     async def _read_loop(self, conn: Connection) -> None:
         while True:
             frame = await _recv_frame(conn, None)
             kind = frame["type"]
             if kind == "state":
-                self._on_state(frame["name"], frame["data"])
+                self._apply_state(frame)
             elif kind == "event":
                 self._on_event(frame["name"], frame["data"])
             elif kind == "result":

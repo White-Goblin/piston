@@ -7,6 +7,9 @@ from homeassistant.const import EntityCategory
 from .entity import DeckyEntity, controller_labels, track_new_entities
 
 
+# Read-only and fed by pushes: nothing to limit.
+PARALLEL_UPDATES = 0
+
 async def async_setup_entry(hass, entry, async_add_entities):
     coordinator = entry.runtime_data
     async_add_entities([ConnectivitySensor(coordinator)])

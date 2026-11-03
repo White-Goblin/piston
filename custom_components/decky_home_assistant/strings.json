@@ -8,6 +8,10 @@
         "data": {
           "host": "Host or IP address",
           "port": "Port"
+        },
+        "data_description": {
+          "host": "The address of the device, for example 192.168.1.20.",
+          "port": "The port the Decky Home Assistant plugin listens on (47830 unless you changed it)."
         }
       },
       "confirm": {
@@ -19,11 +23,26 @@
         "description": "Open the Decky Home Assistant panel on the device and enter the code shown there.",
         "data": {
           "code": "Pairing code"
+        },
+        "data_description": {
+          "code": "The six digits shown in the plugin panel on the device. The code is valid for five minutes."
         }
       },
       "reauth_confirm": {
         "title": "Pair {name} again",
         "description": "The device no longer accepts this Home Assistant. In the plugin panel choose Reset pairing, then continue and enter the new code."
+      },
+      "reconfigure": {
+        "title": "Change the address of {name}",
+        "description": "Use this when the device has a new address and Home Assistant does not find it by itself. The pairing is kept.",
+        "data": {
+          "host": "Host or IP address",
+          "port": "Port"
+        },
+        "data_description": {
+          "host": "The new address of the device, for example 192.168.1.20.",
+          "port": "The port the Decky Home Assistant plugin listens on (47830 unless you changed it)."
+        }
       }
     },
     "error": {
@@ -40,7 +59,8 @@
       "already_paired": "The device is already paired with another Home Assistant. In the plugin panel choose Reset pairing, then try again.",
       "not_supported": "This device did not identify itself and cannot be set up.",
       "wrong_device": "A different device answered. Try again.",
-      "reauth_successful": "Pairing was renewed."
+      "reauth_successful": "Pairing was renewed.",
+      "reconfigure_successful": "The address was updated."
     }
   },
   "options": {
@@ -58,7 +78,12 @@
         },
         "data_description": {
           "turn_off": "Sleep (suspend) can be woken again with Wake on LAN. Shutdown needs the power button on most devices.",
-          "pip_cameras": "Cameras offered in the PiP camera selector. The show_pip action works with any camera."
+          "pip_cameras": "Cameras offered in the PiP camera selector. The show_pip action works with any camera.",
+          "sensor_interval": "How often the device reports temperatures, load and battery. Shorter updates more often but uses a little more power.",
+          "pip_position": "Where the camera picture appears on the device screen by default.",
+          "pip_size": "How large the camera picture is by default.",
+          "pip_duration": "How long the camera picture stays before it hides itself by default. The show_pip action can override this.",
+          "pip_mute": "Start camera pictures without sound by default."
         }
       }
     }
@@ -135,6 +160,10 @@
     "version_skew_new": {
       "title": "The Decky Home Assistant integration is too old for {name}",
       "description": "Update the integration in HACS, then restart Home Assistant."
+    },
+    "device_unreachable": {
+      "title": "{name} has not been reachable for over a day",
+      "description": "Home Assistant could not connect to {name} for more than 24 hours. If the device is normally switched off, you can ignore this; the message disappears when it connects again. Otherwise check that it is on, that the Decky Home Assistant plugin is running on it and that it is on the same network."
     }
   },
   "selector": {

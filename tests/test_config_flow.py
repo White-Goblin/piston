@@ -128,6 +128,44 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r["type"], r["reason"]), ("abort", "reauth_successful"))
         self.assertEqual(entry.data["secret"], self.dev.box["secret"].hex())
 
+    # --- reconfigure: change the address, keep the pairing -------------------------
+
+    def reconfigurable(self, **data):
+        entry = ConfigEntry(data={"device_id": "dev123abc456", "secret": "00" * 32, "host": "10.0.0.9", "port": 1, "name": "Box", **data},
+                            entry_id="e1", unique_id="dev123abc456")
+        self.hass.config_entries.entries.append(entry)
+        flow = self.flow()
+        flow.context.update(entry_id="e1", source="reconfigure")
+        return entry, flow
+
+    async def test_reconfigure_shows_the_current_address(self):
+        entry, flow = self.reconfigurable()
+        form = await flowutil.step(flow, "reconfigure")
+        self.assertEqual((form["type"], form["step_id"]), ("form", "reconfigure"))
+        self.assertEqual(form["description_placeholders"], {"name": "Box"})
+
+    async def test_reconfigure_with_the_same_device_updates_the_address_and_reloads_without_touching_the_secret(self):
+        entry, flow = self.reconfigurable()
+        r = await flowutil.step(flow, "reconfigure", {"host": " 127.0.0.1 ", "port": self.dev.server.port})
+        self.assertEqual((r["type"], r["reason"]), ("abort", "reconfigure_successful"))
+        self.assertEqual((entry.data["host"], entry.data["port"]), ("127.0.0.1", self.dev.server.port))
+        self.assertEqual(entry.data["secret"], "00" * 32)                    # the pairing is untouched
+        self.assertEqual(self.hass.config_entries.reloaded, ["e1"])
+
+    async def test_reconfigure_to_a_different_device_aborts_and_changes_nothing(self):
+        entry, flow = self.reconfigurable(device_id="someone-else", unique_id=None)
+        r = await flowutil.step(flow, "reconfigure", {"host": "127.0.0.1", "port": self.dev.server.port})
+        self.assertEqual((r["type"], r["reason"]), ("abort", "wrong_device"))
+        self.assertEqual((entry.data["host"], entry.data["port"]), ("10.0.0.9", 1))
+        self.assertEqual(self.hass.config_entries.reloaded, [])
+
+    async def test_reconfigure_to_an_unreachable_address_shows_the_error_and_keeps_what_was_typed(self):
+        entry, flow = self.reconfigurable()
+        r = await flowutil.step(flow, "reconfigure", {"host": "127.0.0.1", "port": 1})
+        self.assertEqual((r["type"], r["step_id"], r["errors"]), ("form", "reconfigure", {"base": "cannot_connect"}))
+        self.assertEqual(entry.data["host"], "10.0.0.9")
+        self.assertEqual(self.hass.config_entries.reloaded, [])
+
     async def test_options_flow_defaults_and_save(self):
         entry = ConfigEntry(options={"turn_off": "shutdown"})
         flow = cf.DeckyConfigFlow.async_get_options_flow(entry)

@@ -71,11 +71,105 @@ class ConfigEntries:
             entry.options = dict(options)
 
 
+class Bus:
+    """Only what the integration uses: listen once for an event, and tests can fire it."""
+
+    def __init__(self):
+        self.once = {}
+
+    def async_listen_once(self, event, callback):
+        self.once.setdefault(event, []).append(callback)
+        return lambda: self.once.get(event, []).remove(callback) if callback in self.once.get(event, []) else None
+
+    async def fire(self, event):
+        import asyncio
+        for callback in self.once.pop(event, []):
+            result = callback(None)
+            if asyncio.iscoroutine(result):
+                await result
+        await asyncio.sleep(0)
+
+
 class HomeAssistant:
     def __init__(self):
         self.data = {}
         self.config_entries = ConfigEntries()
         self.bus_events = []
+        self.bus = Bus()
+
+    def async_create_task(self, coro):
+        import asyncio
+        return asyncio.get_running_loop().create_task(coro)
+
+
+def _async_redact_data(data, to_redact):
+    """homeassistant.components.diagnostics.async_redact_data: replace the value of every key in to_redact, recursively."""
+    if not isinstance(data, (dict, list)):
+        return data
+    if isinstance(data, list):
+        return [_async_redact_data(v, to_redact) for v in data]
+    return {k: ("**REDACTED**" if k in to_redact else _async_redact_data(v, to_redact)) for k, v in data.items()}
+
+
+class Timers:
+    """homeassistant.helpers.event.async_track_time_interval: remembers (action, interval); tests call the action."""
+    tracked = []
+
+    @classmethod
+    def async_track_time_interval(cls, hass, action, interval):
+        entry = (action, interval)
+        cls.tracked.append(entry)
+        return lambda: cls.tracked.remove(entry) if entry in cls.tracked else None
+
+
+class Store:
+    """homeassistant.helpers.storage.Store with an in-memory "disk" shared by all instances (clear it with reset())."""
+    files = {}       # key -> {"version": int, "data": ...}  or an Exception to raise when read (a corrupt file)
+    writes = []      # (key, data) for every real write
+    delays = []      # (key, delay) for every async_delay_save call
+    removed = []
+
+    @classmethod
+    def reset(cls):
+        cls.files, cls.writes, cls.delays, cls.removed = {}, [], [], []
+
+    def __init__(self, hass, version, key, private=False, *, atomic_writes=False, minor_version=1):
+        self.hass, self.version, self.key = hass, version, key
+        self._pending = None
+
+    async def async_load(self):
+        import copy
+        found = Store.files.get(self.key)
+        if found is None:
+            return None
+        if isinstance(found, Exception):
+            raise found
+        if found["version"] != self.version:
+            return await self._async_migrate_func(found["version"], 1, copy.deepcopy(found["data"]))
+        return copy.deepcopy(found["data"])
+
+    async def _async_migrate_func(self, old_major_version, old_minor_version, old_data):
+        raise NotImplementedError
+
+    async def async_save(self, data):
+        import copy
+        Store.files[self.key] = {"version": self.version, "data": copy.deepcopy(data)}
+        Store.writes.append((self.key, copy.deepcopy(data)))
+
+    def async_delay_save(self, data_func, delay=0):
+        self._pending = data_func
+        Store.delays.append((self.key, delay))
+
+    async def fire_delay(self):
+        """What Home Assistant does when the delay timer ends (tests call this instead of waiting)."""
+        if self._pending is not None:
+            func, self._pending = self._pending, None
+            await self.async_save(func())
+
+    async def async_remove(self):
+        self._pending = None
+        Store.files.pop(self.key, None)
+        Store.removed.append(self.key)
 
 
 class AbortFlow(Exception):
@@ -118,10 +212,13 @@ class ConfigFlow:
     def async_abort(self, *, reason, description_placeholders=None):
         return {"type": "abort", "reason": reason}
 
+    def _get_reconfigure_entry(self):
+        return self.hass.config_entries.async_get_entry(self.context["entry_id"])
+
     def async_update_reload_and_abort(self, entry, *, data_updates=None, **kw):
         entry.data = {**entry.data, **(data_updates or {})}
         self.hass.config_entries.reloaded.append(entry.entry_id)
-        return {"type": "abort", "reason": "reauth_successful"}
+        return {"type": "abort", "reason": "reconfigure_successful" if self.context.get("source") == "reconfigure" else "reauth_successful"}
 
 
 class OptionsFlow:
@@ -271,6 +368,10 @@ class HomeAssistantError(Exception):
     pass
 
 
+class ServiceValidationError(HomeAssistantError):
+    pass
+
+
 class SwitchEntity(Entity):
     pass
 
@@ -344,14 +445,18 @@ def install() -> None:
     _module("homeassistant.helpers.entity", Entity=Entity)
     _module("homeassistant.helpers.device_registry", CONNECTION_NETWORK_MAC="mac", DeviceInfo=DeviceInfo)
     _module("homeassistant.helpers.issue_registry", async_create_issue=async_create_issue,
-            async_delete_issue=async_delete_issue, IssueSeverity=types.SimpleNamespace(ERROR="error"),
+            async_delete_issue=async_delete_issue, IssueSeverity=types.SimpleNamespace(ERROR="error", WARNING="warning"),
             IssueRegistry=IssueRegistry)
     sys.modules["homeassistant.helpers"].issue_registry = sys.modules["homeassistant.helpers.issue_registry"]
-    _module("homeassistant.const", EntityCategory=types.SimpleNamespace(DIAGNOSTIC="diagnostic", CONFIG="config"))
+    _module("homeassistant.const", EntityCategory=types.SimpleNamespace(DIAGNOSTIC="diagnostic", CONFIG="config"),
+            EVENT_HOMEASSISTANT_STOP="homeassistant_stop")
+    _module("homeassistant.helpers.storage", Store=Store)
+    _module("homeassistant.helpers.event", async_track_time_interval=Timers.async_track_time_interval)
     _module("homeassistant.components")
+    _module("homeassistant.components.diagnostics", async_redact_data=_async_redact_data)
     _module("homeassistant.components.binary_sensor", BinarySensorEntity=BinarySensorEntity,
             BinarySensorDeviceClass=types.SimpleNamespace(CONNECTIVITY="connectivity"))
-    _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError)
+    _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError, ServiceValidationError=ServiceValidationError)
     _module("homeassistant.components.media_player", MediaPlayerEntity=MediaPlayerEntity,
             MediaPlayerEntityFeature=MediaPlayerEntityFeature, MediaPlayerState=MediaPlayerState,
             MediaPlayerDeviceClass=types.SimpleNamespace(TV="tv"))

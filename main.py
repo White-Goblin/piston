@@ -19,6 +19,7 @@ from decky_ha.media_keys import MediaKeyMixin
 from decky_ha.pairing import PairingMixin
 from decky_ha.pip import PipMixin
 from decky_ha.pip_signal import PipSignalMixin
+from decky_ha.resume import ResumeMixin
 from decky_ha.sensors import SensorsMixin
 from decky_ha.server import DEFAULT_PORT, ProtocolServer
 from decky_ha.settings import SettingsMixin
@@ -29,6 +30,7 @@ from decky_ha.wol import WolMixin
 class Plugin(
     SettingsMixin,
     StateMixin,
+    ResumeMixin,
     PairingMixin,
     ControlMixin,
     AudioMixin,
@@ -138,11 +140,13 @@ class Plugin(
         if self.server.port:
             self.advertiser = Advertiser(self._advert_info, self.server.port)
             await self.advertiser.start()
+        await self._start_lifecycle()
 
     async def _unload(self):
         decky.logger.info("Decky Home Assistant unloading")
         for task in (self.sensor_task, self.audio_task, self.device_task, self.session_task, self.resume_task, self.playback_task):
             task.cancel()
+        await self._stop_lifecycle()
         if self.advertiser is not None:
             await self.advertiser.stop()
         await self.server.stop()

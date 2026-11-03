@@ -1,5 +1,6 @@
 import asyncio
 import unittest
+import unittest.mock
 
 from custom_components.decky_home_assistant import client as c
 from decky_ha.pairing import PairingManager
@@ -131,7 +132,86 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.02)
         self.assertEqual(self.events, [("going_to_sleep", {})])
 
-    async def test_reconnects_after_a_drop_with_backoff_that_resets(self):
+    # --- sequencing (protocol v2) ---------------------------------------------
+
+    async def started_with_spy(self, **kw):
+        """A connected client whose commands are recorded; the fake clock is controlled by the test."""
+        self.now = [100.0]
+        client = self.make(clock=lambda: self.now[0], **kw)
+        self.calls = []
+        real = client.command
+
+        async def spy(name, data=None):
+            self.calls.append(name)
+            return await real(name, data)
+
+        client.command = spy
+        await client.start()
+        await asyncio.wait_for(self.connected.wait(), 3)
+        return client
+
+    async def until(self, condition, tries=100):
+        for _ in range(tries):
+            if condition():
+                return
+            await asyncio.sleep(0.01)
+        self.fail("condition not reached")
+
+    async def test_in_order_state_frames_are_applied_without_a_resync(self):
+        await self.started_with_spy()
+        for i in range(3):
+            self.dev.server.push_state("device", {"name": f"v{i}"})
+        await self.until(lambda: len(self.states) == 4)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "v0", "v1", "v2"])
+        self.assertEqual(self.calls, [])
+
+    async def test_stale_or_duplicate_frames_are_dropped(self):
+        await self.started_with_spy()
+        self.dev.server._seq["device"] = 0
+        self.dev.server.push_state("device", {"name": "stale"})   # seq 1 again: not newer than the snapshot
+        self.dev.server.push_state("device", {"name": "stale2"})  # seq 2: newer, applied
+        await self.until(lambda: len(self.states) == 2)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "stale2"])
+        self.assertEqual(self.calls, [])
+
+    async def test_a_gap_is_applied_and_one_resync_requested_and_rate_limited(self):
+        await self.started_with_spy()
+        self.dev.server._seq["device"] += 4
+        self.dev.server.push_state("device", {"name": "after-gap"})
+        await self.until(lambda: [d["name"] for _, d in self.states][-1:] == ["box"] and len(self.states) == 3)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "after-gap", "box"])  # snapshot from the resync
+        self.assertEqual(self.calls, ["resync"])
+        self.dev.server._seq["device"] += 4                         # a second gap within 5 s
+        self.dev.server.push_state("device", {"name": "again"})
+        await self.until(lambda: len(self.states) == 4)
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.calls, ["resync"])
+        self.now[0] += 6                                            # after the interval a gap is repaired again
+        self.dev.server._seq["device"] += 4
+        self.dev.server.push_state("device", {"name": "third"})
+        await self.until(lambda: self.calls == ["resync", "resync"])
+
+    async def test_a_new_boot_id_resets_tracking_without_a_resync(self):
+        await self.started_with_spy()
+        self.dev.server.boot_id = "newboot"
+        self.dev.server._seq["device"] += 9
+        self.dev.server.push_state("device", {"name": "rebooted"})
+        await self.until(lambda: len(self.states) == 2)
+        self.assertEqual(self.states[-1][1]["name"], "rebooted")
+        self.assertEqual(self.calls, [])
+
+    async def test_tracking_resets_on_reconnect(self):
+        await self.started_with_spy()
+        self.dev.server.push_state("device", {"name": "v"})
+        await self.until(lambda: len(self.states) == 2)
+        self.connected.clear()
+        await self.dev.server.disconnect(1001, "bye")
+        await asyncio.wait_for(self.connected.wait(), 3)
+        await self.until(lambda: len(self.states) == 3)             # the new snapshot (seq 2 again) is applied
+        self.assertEqual(self.states[-1][1]["name"], "box")
+        self.assertEqual(self.calls, [])
+
+    async def test_reconnects_after_a_drop_after_the_fast_probe_delay(self):
         client = self.make()
         await client.start()
         await asyncio.wait_for(self.connected.wait(), 3)
@@ -139,17 +219,145 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         await self.dev.server.disconnect(1001, "bye")
         await asyncio.wait_for(self.connected.wait(), 3)
         self.assertEqual(self.connection, [True, False, True])
-        self.assertEqual(self.sleeps[:1], [2])
+        self.assertEqual(self.sleeps[:1], [c.PROBE_FAST_SECONDS])
 
-    async def test_backoff_doubles_while_unreachable_then_caps(self):
+    # --- probe policy and wake ---------------------------------------------------
+
+    def build(self, sleep, **kw):
+        client = c.DeckyClient(self.transport, "127.0.0.1", self.port, "dev123", self.SECRET,
+                               on_state=lambda n, d: self.states.append((n, d)), on_event=lambda n, d: self.events.append((n, d)),
+                               on_connection=self.connection.append, on_problem=self.problems.append, sleep=sleep, **kw)
+        self.addAsyncCleanup(client.stop)
+        return client
+
+    def timed_client(self, **kw):
+        """A client whose clock only moves when its sleep is called, so ten minutes pass in no time."""
+        self.now = [1000.0]
+
+        async def sleep(seconds):
+            self.sleeps.append(seconds)
+            self.now[0] += seconds
+            await asyncio.sleep(0)
+
+        return self.build(sleep, clock=lambda: self.now[0], **kw)
+
+    def endless_client(self):
+        """A client that, once an attempt has failed, waits for ever for the next probe (only wake() moves it on)."""
+        blocked = asyncio.Event()
+
+        async def sleep(seconds):
+            self.sleeps.append(seconds)
+            await blocked.wait()
+
+        return self.build(sleep)
+
+    async def test_a_lost_device_is_probed_every_5_s_for_10_minutes_then_every_30_s(self):
         await self.dev.server.stop()
-        client = self.make()
+        client = self.timed_client()
         await client.start()
-        for _ in range(200):
-            if len(self.sleeps) >= 9:
+        for _ in range(300):
+            if len(self.sleeps) >= 125:
                 break
             await asyncio.sleep(0.01)
-        self.assertEqual(self.sleeps[:9], [2, 4, 8, 16, 32, 64, 128, 256, 300])
+        self.assertEqual(self.sleeps[:120], [5] * 120)
+        self.assertEqual(self.sleeps[120:125], [30] * 5)
+
+    async def test_the_fast_window_starts_again_after_a_connection_is_lost(self):
+        client = self.timed_client()
+        await client.start()
+        await self.until(lambda: self.connection == [True])
+        self.now[0] += 3600                       # connected for an hour, then it drops
+        await self.dev.server.disconnect(1001, "bye")
+        await self.until(lambda: self.sleeps[:1] == [5])
+
+    async def test_wake_cuts_the_wait_short(self):
+        await self.dev.server.stop()
+        client = self.endless_client()
+        await client.start()
+        await self.until(lambda: len(self.transport.connects) == 1 and self.sleeps)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(self.transport.connects), 1)       # waiting for the next probe
+        client.wake()
+        await self.until(lambda: len(self.transport.connects) == 2)
+
+    async def test_a_wake_during_an_attempt_starts_no_second_one_but_the_next_follows_at_once(self):
+        gate = asyncio.Event()
+        in_flight = []                                           # sleeps seen so far, noted when each attempt starts
+
+        async def slow_connect(host, port):
+            in_flight.append(len(self.sleeps))
+            await gate.wait()
+            raise OSError("host unreachable")
+
+        self.transport.connect = slow_connect
+        client = self.endless_client()
+        await client.start()
+        await self.until(lambda: len(in_flight) == 1)
+        client.wake()                                            # the first attempt is still running
+        client.wake()
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(in_flight), 1)                      # no second attempt alongside it
+        gate.set()                                               # it fails; the kept wake makes the next one start without a wait
+        await self.until(lambda: len(in_flight) == 2)
+        self.assertEqual(in_flight, [0, 0])                      # it never went into the endless sleep in between
+
+    async def test_wake_while_connected_is_ignored(self):
+        client = self.timed_client()
+        await client.start()
+        await self.until(lambda: self.connection == [True])
+        client.wake()
+        self.assertFalse(client._wake.is_set())
+
+    async def test_a_connect_that_never_answers_is_abandoned_after_the_connect_timeout(self):
+        async def hang(host, port):
+            await asyncio.Event().wait()
+
+        self.transport.connect = hang
+        with unittest.mock.patch.object(c, "PROBE_CONNECT_TIMEOUT", 0.05):
+            client = self.timed_client()
+            await client.start()
+            await self.until(lambda: len(self.sleeps) >= 2)       # attempts keep ending, nothing hangs
+        self.assertEqual(self.sleeps[:2], [5, 5])
+
+    async def test_probe_mode_and_failed_attempts_describe_the_connection_for_diagnostics(self):
+        await self.dev.server.stop()
+        client = self.timed_client()
+        self.assertEqual(client.probe_mode, "fast")                    # not started yet: the fast window runs from the start
+        await client.start()
+        await self.until(lambda: client.failed_attempts >= 3)
+        self.assertEqual(client.probe_mode, "fast")
+        self.now[0] += 700                                              # gone for over 10 minutes
+        self.assertEqual(client.probe_mode, "slow")
+
+    async def test_a_connection_resets_the_failed_attempts_and_reports_the_boot_id(self):
+        client = self.timed_client()
+        await client.start()
+        await self.until(lambda: self.connection == [True])
+        self.assertEqual((client.probe_mode, client.failed_attempts), ("connected", 0))
+        await self.until(lambda: client.boot_id == self.dev.server.boot_id)
+
+    async def test_probe_mode_is_stopped_after_a_rejected_secret(self):
+        client = c.DeckyClient(
+            self.transport, "127.0.0.1", self.port, "dev123", b"w" * 32, on_state=lambda n, d: None, on_event=lambda n, d: None,
+            on_connection=lambda up: None, on_problem=self.problems.append, sleep=self.fake_sleep)
+        self.addAsyncCleanup(client.stop)
+        await client.start()
+        await asyncio.wait_for(client._task, 3)
+        self.assertEqual(client.probe_mode, "stopped")
+
+    async def test_the_address_lookup_is_rate_limited(self):
+        await self.dev.server.stop()
+        lookups = []
+
+        async def resolver():
+            lookups.append(self.now[0])
+            return None
+
+        client = self.timed_client(resolver=resolver)
+        await client.start()
+        await self.until(lambda: len(self.sleeps) >= 25)          # 125 s of probing
+        self.assertLessEqual(len(lookups), 3)
+        self.assertEqual(lookups[0], 1000.0)                      # the first failure still looks (address changes)
 
     async def test_resolver_moves_the_client_to_the_new_address(self):
         await self.dev.server.stop()

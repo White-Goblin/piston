@@ -4,6 +4,10 @@ DOMAIN = "decky_home_assistant"
 PLATFORMS: list[str] = ["binary_sensor", "button", "event", "media_player", "notify", "select", "sensor", "switch"]
 
 DEFAULT_PORT = 47830
+# Websocket ping interval. A ping unanswered after half of it closes the socket, so a connection left half-open by a
+# suspend is noticed within about 1.5 x this (22 s). The device pings every 20 s and drops a silent peer after 60 s,
+# so these do not interact: its own pings are what keep the device side alive.
+HEARTBEAT_SECONDS = 15
 SERVICE_TYPE = "_deckyha._tcp.local."
 
 CONF_DEVICE_ID = "device_id"

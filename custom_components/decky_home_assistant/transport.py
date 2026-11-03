@@ -6,6 +6,7 @@ import asyncio
 import aiohttp
 
 from .client import ConnectionClosed
+from .const import HEARTBEAT_SECONDS
 
 
 class AiohttpConnection:
@@ -42,7 +43,8 @@ class AiohttpTransport:
         host = f"[{host}]" if ":" in host and not host.startswith("[") else host
         try:
             ws = await self._session.ws_connect(f"ws://{host}:{port}/ws", timeout=aiohttp.ClientWSTimeout(ws_close=5)
-                                                if hasattr(aiohttp, "ClientWSTimeout") else 5, heartbeat=None)
+                                                if hasattr(aiohttp, "ClientWSTimeout") else 5,
+                                                heartbeat=HEARTBEAT_SECONDS)
         except (aiohttp.ClientError, OSError, asyncio.TimeoutError) as e:
             raise OSError(str(e)) from None
         return AiohttpConnection(ws)

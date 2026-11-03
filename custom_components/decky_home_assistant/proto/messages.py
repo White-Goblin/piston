@@ -5,6 +5,7 @@ from . import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
 
 MAX_FRAME_BYTES = 1_000_000
 MAX_NAME_LEN = 64
+MAX_BOOT_ID_LEN = 32
 
 # Error codes carried in `result.error.code` (and used as exception codes).
 BAD_REQUEST = "bad_request"
@@ -49,8 +50,9 @@ def result_error(msg_id: int, code: str, message: str = "") -> dict:
     return {"type": "result", "id": msg_id, "ok": False, "error": {"code": code, "message": message or code}}
 
 
-def state(name: str, data: dict) -> dict:
-    return {"type": "state", "name": name, "data": data}
+def state(name: str, data: dict, boot_id: str, seq: int) -> dict:
+    """A state group value. `boot_id` identifies the device backend run, `seq` counts pushes of this group (from 1)."""
+    return {"type": "state", "name": name, "data": data, "boot_id": boot_id, "seq": seq}
 
 
 def event(name: str, data: dict | None = None) -> dict:
@@ -98,6 +100,10 @@ def parse(text) -> dict:
         _require(_is_name(frame.get("name")), f"{ftype}.name invalid")
         _require(isinstance(frame.get("data", {}), dict), f"{ftype}.data must be an object")
         frame.setdefault("data", {})
+        if ftype == "state":
+            boot_id = frame.get("boot_id")
+            _require(isinstance(boot_id, str) and 0 < len(boot_id) <= MAX_BOOT_ID_LEN, "state.boot_id invalid")
+            _require(_is_id(frame.get("seq")) and frame["seq"] >= 1, "state.seq must be an integer >= 1")
     return frame
 
 
@@ -112,7 +118,8 @@ def _is_name(value) -> bool:
 def negotiate(own: int, own_min: int, peer: int, peer_min: int) -> int:
     """Return the protocol version both sides speak, or raise ProtocolError(version_skew).
 
-    Each side accepts its own version and the previous one; ranges must overlap.
+    Each side accepts the versions from its minimum to its own; the ranges must overlap
+    (with both minimums equal to their own version, only an identical version works).
     `data["peer"]` is "old" when the other side is too old (update it) or "new" when it is too new.
     """
     if peer < own_min:

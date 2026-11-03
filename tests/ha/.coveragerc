@@ -1,0 +1,11 @@
+[run]
+source = custom_components.decky_home_assistant
+omit =
+    # Verbatim copy of decky_ha/proto (scripts/sync_proto.py; a test fails when they differ). Its source of truth is exercised
+    # by the plugin's own suite; much of it (pairing code generation, the server half of the key exchange) only runs on the device.
+    */decky_home_assistant/proto/*
+
+[report]
+show_missing = True
+exclude_lines =
+    pragma: no cover

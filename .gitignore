@@ -83,3 +83,7 @@ settings.json
 .public-check.local
 *.bak
 settings*.json
+
+# Dev-only virtualenv for tests/ha (see tests/ha/README.md)
+.venv-ha/
+.coverage
