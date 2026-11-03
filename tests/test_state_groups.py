@@ -167,20 +167,73 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(h.session, "game")
 
 
+class AnnounceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sleep_and_shutdown_are_sent_and_flushed(self):
+        use_temp_settings_dir()
+        h = Host()
+        h.server = FakeServer()
+        h.server.flush = mock.AsyncMock()
+        await h._announce_sleep()
+        await h._announce_shutdown("shutdown")
+        self.assertEqual(h.server.events, [("going_to_sleep", {"reason": "suspend"}), ("shutting_down", {"reason": "shutdown"})])
+        self.assertEqual(h.server.flush.await_count, 2)
+
+    async def test_nothing_to_flush_without_a_server(self):
+        use_temp_settings_dir()
+        h = Host()
+        await h._announce_sleep()                      # must not raise
+
+    async def test_protection_follows_the_lifecycle_module(self):
+        use_temp_settings_dir()
+        h = Host()
+        self.assertFalse(h._sleep_protected())
+        self.assertFalse(h._lifecycle_active())
+        h.lifecycle = mock.Mock(active=True, protecting=False)
+        self.assertTrue(h._lifecycle_active())
+        self.assertFalse(h._sleep_protected())         # monitor up but no inhibitor: our own announcement stays
+        h.lifecycle.protecting = True
+        self.assertTrue(h._sleep_protected())
+
+
+class HoldTests(unittest.TestCase):
+    def setUp(self):
+        use_temp_settings_dir()
+        self.h = Host()
+        self.h.server = FakeServer()
+
+    def test_held_pushes_are_sent_on_release_only_when_changed(self):
+        self.h.groups = {"audio": {"volume": 10}, "sensors": {"cpu": 1}}
+        before = dict(self.h.groups)
+        token = self.h._hold_pushes()
+        self.h._push("audio", {"volume": 10})            # same as before
+        self.h._push("sensors", {"cpu": 2})              # changed
+        self.h._push("sensors", {"cpu": 3})              # latest value wins
+        self.assertEqual(self.h.server.states, [])
+        self.h._release_pushes(token, before)
+        self.assertEqual(self.h.server.states, [("sensors", {"cpu": 3})])
+        self.h._push("audio", {"volume": 11})            # no longer held
+        self.assertEqual(self.h.server.states[-1], ("audio", {"volume": 11}))
+
+    def test_releasing_an_old_hold_does_not_end_a_newer_one(self):
+        old = self.h._hold_pushes()
+        new = self.h._hold_pushes()
+        self.h._release_pushes(old, {})
+        self.h._push("x", {"v": 1})
+        self.assertEqual(self.h.server.states, [])       # the newer hold is still collecting
+        self.h._release_pushes(new, {})
+        self.assertEqual(self.h.server.states, [("x", {"v": 1})])
+
+
 class ResumeTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_wall_clock_jump_is_a_resume(self):
         use_temp_settings_dir()
         h = Host()
-        h.loop = asyncio.get_running_loop()
-        h.server = FakeServer()
-        h.groups = {"sensors": {"cpu_load": 1}}
-        restarted = []
+        announced = []
 
-        class Adv:
-            async def restart(self):
-                restarted.append(1)
+        async def announce():
+            announced.append(1)
 
-        h.advertiser = Adv()
+        h._announce_resume = announce
         walls = iter([1000.0, 1002.0, 1500.0, 1502.0, 1504.0])  # the third reading jumps ~500 s
         monos = iter([50.0, 52.0, 54.0, 56.0, 58.0])
         sleeps = []
@@ -195,25 +248,29 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(state_module.asyncio, "sleep", fake_sleep):
             with self.assertRaises(asyncio.CancelledError):
                 await h._resume_loop()
-        self.assertEqual(h.server.events, [("resumed", None)])
-        self.assertEqual(h.server.states, [("sensors", {"cpu_load": 1})])
-        self.assertEqual(restarted, [1])
+        self.assertEqual(announced, [1])
 
-
-    async def test_resume_drops_a_running_pip(self):
-        from . import fake as fake_decky
+    async def test_the_wall_clock_fallback_stays_quiet_while_logind_announces_resumes(self):
         use_temp_settings_dir()
-        fake_decky.emitted.clear()
         h = Host()
         h.loop = asyncio.get_running_loop()
         h.server = FakeServer()
-        closed = []
-        h.pip_sessions = {"sess-12345678": object()}
-        h._pip_close_all = lambda notify: (closed.append(notify), h.pip_sessions.clear())
-        await h._announce_resume()
-        self.assertEqual(closed, [True])
-        self.assertIn(("pip", ({"action": "hide"},)), fake_decky.emitted)
-        self.assertEqual(h.server.events[0][0], "resumed")
+        h.lifecycle = mock.Mock(active=True, protecting=True)
+        walls = iter([1000.0, 1500.0, 1502.0, 1504.0])          # the second reading jumps ~500 s
+        monos = iter([50.0, 52.0, 54.0, 56.0])
+        sleeps = []
+
+        async def fake_sleep(s):
+            sleeps.append(s)
+            if len(sleeps) > 2:
+                raise asyncio.CancelledError
+
+        with mock.patch.object(state_module.time, "time", lambda: next(walls)), \
+                mock.patch.object(state_module.time, "monotonic", lambda: next(monos)), \
+                mock.patch.object(state_module.asyncio, "sleep", fake_sleep):
+            with self.assertRaises(asyncio.CancelledError):
+                await h._resume_loop()
+        self.assertEqual(h.server.events, [])
 
 
 class EnableCommandTests(unittest.TestCase):

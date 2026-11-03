@@ -126,15 +126,25 @@ export function registerDeviceControl(): () => void {
   const appListener = addEventListener<[c: { action: "launch" | "quit"; appid?: string }]>("app", onApp);
   const powerListener = addEventListener<[c: { action: string }]>("power", onPower);
 
-  // Apps already running when the plugin loads (e.g. after a reload) get no lifetime event
-  try {
-    const running = [...(SteamUIStore.m_runningAppIDs ?? [])];
-    runningAppId = running.length ? String(running[0]) : "";
-    reportAppState(runningAppId, runningAppId ? appName(runningAppId) : "").catch(() => {});
-  } catch {
-    // Steam's store is not ready; lifetime events still cover new launches
-    reportAppState("", "").catch(() => {});
-  }
+  // Read what is running now and report it. Returns false when Steam's store is not ready, so the caller
+  // can decide (at load: report nothing running; on a resume request: stay silent, the backend asks again).
+  const syncRunningApp = (): boolean => {
+    try {
+      const running = [...(SteamUIStore.m_runningAppIDs ?? [])];
+      runningAppId = running.length ? String(running[0]) : "";
+      reportAppState(runningAppId, runningAppId ? appName(runningAppId) : "").catch(() => {});
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Apps already running when the plugin loads (e.g. after a reload) get no lifetime event.
+  // If Steam's store is not ready, lifetime events still cover new launches
+  if (!syncRunningApp()) reportAppState("", "").catch(() => {});
+
+  // After a wake the backend asks for the running app again (a game may have ended during the suspend)
+  const syncListener = addEventListener<[]>("app_sync", syncRunningApp);
 
   // Steam repeats this event every few seconds, so only report changes. Steam's interface
   // is the steamwebhelper window. It is in front when it holds focus (home, library), and
@@ -183,6 +193,7 @@ export function registerDeviceControl(): () => void {
   return () => {
     removeEventListener("app", appListener);
     removeEventListener("power", powerListener);
+    removeEventListener("app_sync", syncListener);
     lifetime?.unregister?.();
     focusEvents?.unregister?.();
     controllerChanges?.unregister?.();

@@ -82,6 +82,7 @@ class ControlMixin:
     async def report_app_state(self, appid: str = "", name: str = "") -> None:
         """Frontend reports the running Steam app (empty when none)."""
         self._set_app_state(appid=appid, name=name)
+        self._app_synced.set()
 
     async def report_app_focus(self, focus: str = "") -> None:
         """Frontend reports which window has focus: "steam" (Steam's interface) or "app"."""
@@ -136,9 +137,10 @@ class ControlMixin:
             await asyncio.get_running_loop().run_in_executor(None, self._switch_session, action == "desktop")
             return {}
         self._require_game_mode()
-        if action == "suspend":
+        if action == "suspend" and not self._sleep_protected():
+            # logind announces every sleep when the lifecycle module runs; this is the fallback when it does not.
             # Tell the integration before the connection goes away so it shows standby, not a drop
-            self._push_event("going_to_sleep")
+            self._push_event("going_to_sleep", {"reason": "suspend"})
             await asyncio.sleep(SLEEP_FLUSH_SECONDS)
         await decky.emit("power", {"action": action})
         return {}

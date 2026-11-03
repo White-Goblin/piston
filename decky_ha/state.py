@@ -5,6 +5,7 @@ import time
 
 import decky
 
+from .lifecycle import Lifecycle
 from .proto import PROTOCOL_VERSION
 from .wol import wol_info
 
@@ -47,13 +48,35 @@ class StateMixin:
     def _init_state(self) -> None:
         self.groups: dict = {}
         self.server = None
+        self._held: dict | None = None  # group names (in first-push order) whose pushes are held back, see _hold_pushes
+        self._app_synced = asyncio.Event()  # set whenever the frontend reports the running app (see resume.py)
+        self.lifecycle: Lifecycle | None = None
         self.session = "unknown"
         self._wol_cache: dict = {"interface": "", "error": "not read yet"}
 
     def _push(self, name: str, data: dict) -> None:
         self.groups[name] = data
+        if self._held is not None:
+            self._held[name] = None  # collected; sent by _release_pushes if the value ended up different
+            return
         if self.server is not None:
             self.server.push_state(name, data)
+
+    def _hold_pushes(self) -> dict:
+        """Collect state pushes instead of sending them (the resume refresh sends only what changed, after the network is up).
+        Returns the token to give to _release_pushes."""
+        self._held = held = {}
+        return held
+
+    def _release_pushes(self, token: dict, before: dict) -> None:
+        """Send every held group whose latest value differs from `before`, in the order they were first pushed.
+        A newer hold keeps its own collection."""
+        if self._held is token:
+            self._held = None
+        for name in token:
+            data = self.groups.get(name)
+            if data != before.get(name) and self.server is not None:
+                self.server.push_state(name, data)
 
     def _push_event(self, name: str, data: dict | None = None) -> None:
         if self.server is not None:
@@ -61,6 +84,34 @@ class StateMixin:
 
     def _snapshot(self) -> dict:
         return dict(self.groups)
+
+    # --- sleep and shutdown announcements (logind, see lifecycle.py) -------------
+
+    async def _start_lifecycle(self) -> None:
+        self.lifecycle = Lifecycle(on_sleep=self._announce_sleep, on_shutdown=self._announce_shutdown,
+                                   on_resume=self._announce_resume)
+        await self.lifecycle.start()
+
+    async def _stop_lifecycle(self) -> None:
+        if self.lifecycle is not None:
+            await self.lifecycle.stop()
+
+    def _lifecycle_active(self) -> bool:
+        return self.lifecycle is not None and self.lifecycle.active
+
+    def _sleep_protected(self) -> bool:
+        """True when logind announces the sleep for us (every path: button, idle timer, Home Assistant, Steam menu)."""
+        return self.lifecycle is not None and self.lifecycle.protecting
+
+    async def _announce_sleep(self) -> None:
+        self._push_event("going_to_sleep", {"reason": "suspend"})
+        if self.server is not None:
+            await self.server.flush()
+
+    async def _announce_shutdown(self, reason: str) -> None:
+        self._push_event("shutting_down", {"reason": reason})
+        if self.server is not None:
+            await self.server.flush()
 
     async def _device_group(self) -> dict:
         """Identity, network and Wake on LAN facts the integration needs while the device is awake."""
@@ -112,26 +163,14 @@ class StateMixin:
             await self._check_session()
             await asyncio.sleep(SESSION_CHECK_SECONDS)
 
-    async def _announce_resume(self) -> None:
-        """The device woke from suspend: tell the integration, re-send everything, and announce on mDNS again."""
-        decky.logger.info("Resumed from suspend")
-        if getattr(self, "pip_sessions", None):
-            # The stream cannot survive the suspend (the network went away): drop the overlay and the relay session
-            self._pip_close_all(notify=True)
-            await decky.emit("pip", {"action": "hide"})
-        self._push_event("resumed")
-        for name, data in list(self.groups.items()):
-            if self.server is not None:
-                self.server.push_state(name, data)
-        advertiser = getattr(self, "advertiser", None)
-        if advertiser is not None:
-            await advertiser.restart()
-
     async def _resume_loop(self) -> None:
         wall, mono = time.time(), time.monotonic()
         while True:
             await asyncio.sleep(RESUME_CHECK_SECONDS)
             now_wall, now_mono = time.time(), time.monotonic()
+            if self._lifecycle_active():
+                wall, mono = now_wall, now_mono  # logind announces the resume; this is only the fallback
+                continue
             if (now_wall - wall) - (now_mono - mono) > RESUME_JUMP_SECONDS:
                 await self._announce_resume()
             wall, mono = now_wall, now_mono

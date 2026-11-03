@@ -37,6 +37,11 @@ class Advertiser:
         self._txt: dict | None = None
         self._task: asyncio.Task | None = None
 
+    @property
+    def advertising(self) -> bool:
+        """True while an advertisement is up on the current address."""
+        return self._adv is not None
+
     def _txt_now(self) -> dict:
         i = self._info()
         return {"device_id": i["device_id"], "name": i["name"], "proto": PROTOCOL_VERSION, "paired": int(bool(i["paired"]))}

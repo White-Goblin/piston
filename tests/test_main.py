@@ -8,13 +8,30 @@ from decky_ha.proto import PROTOCOL_VERSION, auth, messages as m, pake
 import main
 
 
+class StubLifecycle:
+    """Stands in for decky_ha.lifecycle.Lifecycle so tests never start gdbus or take a real inhibitor."""
+    instances = []
+
+    def __init__(self, **callbacks):
+        self.callbacks, self.active, self.protecting, self.started, self.stopped = callbacks, False, False, False, False
+        StubLifecycle.instances.append(self)
+
+    async def start(self):
+        self.started = True
+
+    async def stop(self):
+        self.stopped = True
+
+
 class PluginTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        StubLifecycle.instances.clear()
         use_temp_settings_dir()
         fake_decky.emitted.clear()
         self.plugin = main.Plugin()
         patches = [
             mock.patch.object(main, "DEFAULT_PORT", 0),
+            mock.patch("decky_ha.state.Lifecycle", StubLifecycle),
             mock.patch("decky_ha.advertise.outbound_ip", lambda: None),
             mock.patch("decky_ha.state.wol_info", lambda: {"interface": "", "error": "none"}),
             mock.patch("decky_ha.audio.AudioMixin._cec_audio_address", lambda self: None),
@@ -27,6 +44,27 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             self.addCleanup(p.stop)
         await self.plugin._main()
         self.addAsyncCleanup(self.plugin._unload)
+
+    async def test_lifecycle_is_started_with_the_plugin_and_stopped_on_unload(self):
+        (lifecycle,) = StubLifecycle.instances
+        self.assertTrue(lifecycle.started)
+        self.assertIs(self.plugin.lifecycle, lifecycle)
+        self.assertFalse(lifecycle.stopped)
+        with mock.patch.object(self.plugin, "_stop_lifecycle", wraps=self.plugin._stop_lifecycle) as stop:
+            await self.plugin._unload()
+            await self.plugin._unload()            # the cleanup unloads again later; that must stay harmless
+        self.assertEqual(stop.await_count, 2)
+        self.assertTrue(lifecycle.stopped)
+
+    async def test_lifecycle_callbacks_send_the_events_to_the_integration(self):
+        (lifecycle,) = StubLifecycle.instances
+        sent, flushed = [], []
+        self.plugin.server.push_event = lambda name, data=None: sent.append((name, data))
+        self.plugin.server.flush = mock.AsyncMock(side_effect=lambda: flushed.append(1))
+        await lifecycle.callbacks["on_sleep"]()
+        await lifecycle.callbacks["on_shutdown"]("restart")
+        self.assertEqual(sent, [("going_to_sleep", {"reason": "suspend"}), ("shutting_down", {"reason": "restart"})])
+        self.assertEqual(len(flushed), 2)                      # each was flushed before returning
 
     async def test_starts_unpaired_with_a_pairing_code(self):
         status = await self.plugin.get_status()

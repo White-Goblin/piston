@@ -69,16 +69,20 @@ class MdnsAdvertiser:
 
     def _open(self):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        if hasattr(socket, "SO_REUSEPORT"):
-            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-        s.bind(("", PORT))
-        iface = socket.inet_aton(self.ip)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton(MCAST) + iface)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, iface)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
-        s.setblocking(False)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if hasattr(socket, "SO_REUSEPORT"):
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            s.bind(("", PORT))
+            iface = socket.inet_aton(self.ip)
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, socket.inet_aton(MCAST) + iface)  # fails while the link is down
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, iface)
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+            s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+            s.setblocking(False)
+        except BaseException:
+            s.close()  # a failed start must not leave a socket bound to the mDNS port behind
+            raise
         return s
 
     def wants(self, data: bytes) -> bool:
@@ -116,7 +120,12 @@ class MdnsAdvertiser:
 
     async def start(self):
         self.sock = self._open()
-        await self._announce(self._packet(), 2)
+        try:
+            await self._announce(self._packet(), 2)
+        except BaseException:
+            self.sock.close()
+            self.sock = None
+            raise
         self._task = asyncio.create_task(self._serve())
 
     async def refresh(self, **txt):

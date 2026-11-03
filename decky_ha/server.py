@@ -82,6 +82,15 @@ class ProtocolServer:
         if self.conn is not None:
             self.conn.send(m.event(name, data))
 
+    async def flush(self) -> None:
+        """Wait until everything sent so far has left the socket buffer (used just before the device goes down)."""
+        conn = self.conn
+        if conn is not None and not conn.closed:
+            try:
+                await conn.writer.drain()
+            except (ConnectionError, OSError):
+                pass
+
     async def disconnect(self, code: int = CLOSE_UNAUTHORIZED, reason: str = "") -> None:
         if self.conn is not None:
             await self._close(self.conn, code, reason)
