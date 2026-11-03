@@ -168,6 +168,18 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coord.groups["sensors"], {"cpu_load": 1})
         self.assertEqual(self.notified, before + 1)
 
+    async def test_the_media_group_is_live_state_and_is_dropped_when_the_device_goes_away(self):
+        playing = {"title": "Ep", "kind": "video", "source": "mpris"}
+        for end in (lambda: self.coord.on_connection(False), lambda: self.coord.on_event("going_to_sleep", {}),
+                    lambda: self.coord.on_event("shutting_down", {"reason": "shutdown"})):
+            self.coord.on_connection(True)
+            before = self.notified
+            self.coord.on_state("media", playing)
+            self.assertEqual(self.coord.groups["media"], playing)
+            self.assertEqual(self.notified, before + 1)
+            end()
+            self.assertNotIn("media", self.coord.groups)
+
     async def test_mac_is_persisted_once_when_it_changes(self):
         saved = []
         coord = DeckyCoordinator(self.hass, entry(), persist_mac=saved.append)

@@ -1,6 +1,8 @@
 import unittest
 
-from homeassistant.components.media_player import MediaPlayerEntityFeature as F, MediaPlayerState as S
+from datetime import datetime, timezone
+
+from homeassistant.components.media_player import MediaPlayerEntityFeature as F, MediaPlayerState as S, MediaType
 from homeassistant.exceptions import HomeAssistantError
 
 from custom_components.decky_home_assistant.client import CommandError
@@ -67,6 +69,62 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
         p, coord = player(audio={"mode": "cec"})
         self.assertIsNone(p.volume_level)
         self.assertFalse(p.is_volume_muted)
+
+
+MEDIA = {"title": "Snowplow Struttin'", "artist": "Thomas & Friends", "album": "Season 2", "kind": "video", "source": "mpris",
+         "duration": 675.107, "position": 12.5, "position_at": 1_762_000_000.25, "art": "abc123"}
+RUNNING = {"apps": APPS, "running": True, "appid": "2451505133", "name": "Jellyfin", "screen": "game", "playback": "playing"}
+
+
+class NowPlayingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_every_property_comes_from_the_media_group(self):
+        p, _ = player(apps=RUNNING, media=MEDIA)
+        self.assertEqual((p.media_title, p.media_artist, p.media_album_name), ("Snowplow Struttin'", "Thomas & Friends", "Season 2"))
+        self.assertEqual((p.media_content_type, p.media_duration, p.media_position), (MediaType.VIDEO, 675, 12))
+        self.assertEqual(p.media_position_updated_at, datetime.fromtimestamp(1_762_000_000.25, tz=timezone.utc))
+        self.assertEqual(p.extra_state_attributes["media_source"], "mpris")
+        self.assertEqual(p.app_name, "Jellyfin")
+
+    async def test_the_steam_fallback_is_an_app(self):
+        p, _ = player(apps=RUNNING, media={"title": "Jellyfin", "kind": "app", "source": "steam"})
+        self.assertEqual((p.media_title, p.media_content_type, p.media_artist), ("Jellyfin", MediaType.APP, None))
+
+    async def test_a_group_without_duration_has_no_progress(self):
+        p, _ = player(apps=RUNNING, media={"title": "Live", "kind": "video", "source": "mpris"})
+        self.assertEqual((p.media_duration, p.media_position, p.media_position_updated_at), (None, None, None))
+        p, _ = player(apps=RUNNING, media={"title": "x", "position": 5.0, "position_at": 1.0})  # a position alone is not shown
+        self.assertEqual((p.media_position, p.media_position_updated_at), (None, None))
+
+    async def test_no_media_group_behaves_as_before(self):
+        p, coord = player(apps=RUNNING)
+        self.assertEqual(p.state, S.PLAYING)
+        self.assertEqual((p.media_title, p.media_artist, p.media_album_name, p.media_content_type, p.media_duration,
+                          p.media_position, p.media_position_updated_at), ("Jellyfin", None, None, None, None, None, None))
+        self.assertIsNone(p.extra_state_attributes["media_source"])
+        coord.on_state("media", {})
+        self.assertEqual(p.media_title, "Jellyfin")
+
+    async def test_desktop_mode_media_sets_the_state(self):
+        idle = {"apps": APPS, "running": False, "screen": "desktop", "playback": "playing"}
+        p, coord = player(apps=idle, media=MEDIA)
+        self.assertEqual(p.state, S.PLAYING)
+        coord.on_state("apps", {**idle, "playback": "paused"})
+        self.assertEqual(p.state, S.PAUSED)
+        coord.on_state("apps", {**idle, "playback": "unknown"})
+        self.assertEqual(p.state, S.IDLE)
+        coord.on_state("apps", idle)
+        coord.on_state("media", {})
+        self.assertEqual(p.state, S.IDLE)  # a stale playback status without media is ignored
+        self.assertIsNone(p.source)
+
+    async def test_the_media_group_is_gone_after_a_disconnect(self):
+        p, coord = player(apps=RUNNING, media=MEDIA)
+        coord.on_connection(False)
+        self.assertIsNone(p.media_artist)
+
+    async def test_the_features_have_no_seek(self):
+        p, _ = player(apps=RUNNING, media=MEDIA)
+        self.assertFalse(p.supported_features & F.SEEK)
 
 
 class CommandTests(unittest.IsolatedAsyncioTestCase):

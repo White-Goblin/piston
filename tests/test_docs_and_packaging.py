@@ -63,7 +63,8 @@ class DocsMatchTheCode(unittest.TestCase):
         self.assertIn(f"## {version}", changelog)
         section = changelog.split(f"## {version}", 1)[1].split("\n## ", 1)[0]
         self.assertIn("together", section)
-        self.assertIn("protocol version 2", section)
+        from decky_ha.proto import PROTOCOL_VERSION
+        self.assertIn(f"protocol version {PROTOCOL_VERSION}", section)
 
     def test_markdown_links_to_local_files_resolve(self):
         import re

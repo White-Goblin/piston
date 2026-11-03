@@ -27,6 +27,25 @@ def populated():
     return coord
 
 
+class MediaDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_media_group_shows_its_shape_but_not_what_is_watched(self):
+        coord = populated()
+        coord.on_state("media", {"title": "Secret Show", "artist": "Somebody", "album": "Season 9", "kind": "video",
+                                 "source": "mpris", "duration": 600.0, "position": 5.0, "position_at": 1.0, "art": "0123456789abcdef"})
+        report = await async_get_config_entry_diagnostics(coord.hass, coord.entry)
+        text = json.dumps(report)
+        for private in ("Secret Show", "Somebody", "Season 9", "0123456789abcdef"):
+            self.assertNotIn(private, text)
+        media = report["groups"]["media"]
+        self.assertEqual((media["title"], media["kind"], media["source"], media["has_art"], media["duration"]),
+                         ("**REDACTED**", "video", "mpris", True, 600.0))
+        self.assertNotIn("art", media)
+
+    async def test_no_media_group_means_none_in_the_report(self):
+        report = await async_get_config_entry_diagnostics(populated().hass, populated().entry)
+        self.assertNotIn("media", report["groups"])
+
+
 class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
     async def report(self, coord):
         return await async_get_config_entry_diagnostics(coord.hass, coord.entry)

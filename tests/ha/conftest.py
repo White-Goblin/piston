@@ -1,5 +1,6 @@
 """Fixtures for running the integration in a real Home Assistant (see README.md)."""
 import asyncio
+import base64
 
 import pytest
 
@@ -12,9 +13,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa
 from custom_components.decky_home_assistant import config_flow  # noqa: E402
 from custom_components.decky_home_assistant.const import DOMAIN  # noqa: E402
 from decky_ha.pairing import PairingManager  # noqa: E402
+from decky_ha.proto import messages  # noqa: E402
 from decky_ha.proto.messages import ProtocolError  # noqa: E402
 from decky_ha.server import ProtocolServer  # noqa: E402
-from tests.stdlib_transport import StdTransport  # noqa: E402
+from tests.stdlib_transport import StdTransport  # noqa: E402  (importing the tests package installs a fake `decky`)
+from decky_ha import artwork as device_artwork  # noqa: E402
 
 SECRET = b"s" * 32
 DEVICE_ID = "dev123abc456"
@@ -40,7 +43,8 @@ class FakeDevice:
         self.fail = {}
         self.delay = {}          # command name -> seconds the device takes before answering
         self.groups = {"device": {"device_id": DEVICE_ID, "name": "Box", "mac": "aa:bb:cc:dd:ee:ff", "broadcast": "10.0.0.255",
-                                  "protocol": 2, "session": "game"}}
+                                  "protocol": 3, "session": "game"}}
+        self.art = device_artwork.ArtStore()   # the image get_artwork serves
 
         def handler(name):
             async def run(data):
@@ -52,6 +56,16 @@ class FakeDevice:
                 return {}
             return run
 
+        async def get_artwork(data):
+            self.commands.append(("get_artwork", data))
+            art_id, offset = messages.artwork_request(data)
+            try:
+                content_type, size, piece, done = self.art.chunk(art_id, offset)
+            except LookupError:
+                raise ProtocolError("not_running", "that artwork is not current any more") from None
+            return {"content_type": content_type, "size": size, "offset": offset,
+                    "data": base64.b64encode(piece).decode(), "done": done}
+
         async def unpair(data):
             self.commands.append(("unpair", data))
             self.pairing.unpair()
@@ -59,7 +73,7 @@ class FakeDevice:
 
         self.server = ProtocolServer(
             device_id=lambda: DEVICE_ID, secret=lambda: self.box["secret"], pairing=self.pairing,
-            commands={**{name: handler(name) for name in COMMANDS}, "unpair": unpair}, snapshot=lambda: dict(self.groups),
+            commands={**{name: handler(name) for name in COMMANDS}, "unpair": unpair, "get_artwork": get_artwork}, snapshot=lambda: dict(self.groups),
             hello_extra=lambda: {"name": "Box"}, host="127.0.0.1", port=0, ping_interval=5, idle_timeout=30)
 
     async def start(self):
@@ -74,6 +88,13 @@ class FakeDevice:
         """The device reports a new value for a state group."""
         self.groups[name] = data
         self.server.push_state(name, data)
+
+    def play(self, data, **media):
+        """The device starts playing something with this image; returns the media group it pushed."""
+        self.art.set(device_artwork.make_art(data))
+        group = {"title": "Ep", "kind": "video", "source": "mpris", "art": self.art.id, **media}
+        self.push("media", group)
+        return group
 
     def event(self, name, data=None):
         self.server.push_event(name, data)

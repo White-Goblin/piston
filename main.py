@@ -15,6 +15,7 @@ from decky_ha.audio import AudioMixin
 from decky_ha.control import ControlMixin
 from decky_ha.controllers import ControllersMixin
 from decky_ha.http_server import HttpServerMixin
+from decky_ha.media import MediaMixin
 from decky_ha.media_keys import MediaKeyMixin
 from decky_ha.pairing import PairingMixin
 from decky_ha.pip import PipMixin
@@ -34,6 +35,7 @@ class Plugin(
     PairingMixin,
     ControlMixin,
     AudioMixin,
+    MediaMixin,
     MediaKeyMixin,
     ControllersMixin,
     SensorsMixin,
@@ -50,6 +52,7 @@ class Plugin(
             "power": self._cmd_power,
             "audio": self._cmd_audio,
             "media_key": self._cmd_media_key,
+            "get_artwork": self._cmd_get_artwork,
             "toast": self._cmd_toast,
             "pip_show": self._cmd_pip_show,
             "pip_hide": self._cmd_pip_hide,
@@ -106,6 +109,7 @@ class Plugin(
         self.http_port = 0
         self.advertiser = None
         self._init_state()
+        self._init_media()
         self._init_pairing()
         self._init_pip_signal()
         decky.logger.info("Decky Home Assistant starting")

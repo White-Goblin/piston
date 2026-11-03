@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0
+
+**Update the plugin on the device and the integration in Home Assistant together.** This release uses protocol version 3 and neither side talks to version 2: a mismatch shows a Repairs item in Home Assistant that names the side to update, and the entities are unavailable until both match. Install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant.
+
+### What is playing, with artwork
+- The media player shows what is playing: title, artist, album, a progress bar and the picture. It works for any app that publishes its playback to the system (MPRIS), for example Jellyfin and YouTube (VacuumTube); the media player is for video, so the content type is always video.
+- Apps and games that publish nothing keep showing their name, and get their Steam library image when there is one.
+- A paused background player (a browser tab, for example) never replaces a running game; a playing one does.
+- Whenever a player is playing or paused the media player shows playing or paused, also in desktop mode and when Steam reports no running app, instead of idle.
+- The picture is fetched from the device only when it changes. Images over 2 MiB are not shown, and nothing is resized.
+- Diagnostics show the shape of what is playing but not the title, artist or album.
+
+### Changed
+- Protocol version 3: a new `media` state group and a `get_artwork` command (see [docs/protocol.md](docs/protocol.md)).
+
 ## 0.2.0
 
 **Update the plugin on the device and the integration in Home Assistant together.** This release uses protocol version 2 and neither side talks to version 1: a mismatch shows a Repairs item in Home Assistant that names the side to update, and the entities are unavailable until both match. Install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant.

@@ -96,11 +96,23 @@ class PlaybackStatusTests(unittest.IsolatedAsyncioTestCase):
         await h._refresh_playback()
         self.assertEqual(h.pushed[-1], {"playback": "playing"})
 
-    async def test_no_running_app_means_unknown_even_if_a_player_lingers(self):
+    async def test_without_a_running_app_the_status_comes_from_a_playing_or_paused_player(self):
         h = self.host({"org.mpris.MediaPlayer2.a": "Playing"}, running=False)
+        await h._refresh_playback()
+        self.assertEqual(h.pushed, [{"playback": "playing"}])
+        h.players["org.mpris.MediaPlayer2.a"] = "Paused"
+        await h._refresh_playback()
+        self.assertEqual(h.pushed[-1], {"playback": "paused"})
+
+    async def test_without_a_running_app_and_without_a_live_player_it_is_unknown(self):
+        h = self.host({"org.mpris.MediaPlayer2.a": "Stopped"}, running=False)
         h.app_state["playback"] = "playing"
         await h._refresh_playback()
         self.assertEqual(h.pushed, [{"playback": "unknown"}])
+        h2 = self.host({}, running=False)
+        h2.app_state["playback"] = "paused"
+        await h2._refresh_playback()
+        self.assertEqual(h2.pushed, [{"playback": "unknown"}])
 
     async def test_a_media_key_refreshes_the_status_right_away(self):
         h = self.host({"org.mpris.MediaPlayer2.a": "Playing"})

@@ -38,6 +38,8 @@ class WsTestClient:
             n = b1 & 0x7F
             if n == 126:
                 (n,) = struct.unpack("!H", await self.reader.readexactly(2))
+            elif n == 127:  # frames of 64 KiB and more
+                (n,) = struct.unpack("!Q", await self.reader.readexactly(8))
             return b0 & 0x0F, await self.reader.readexactly(n)
         return await asyncio.wait_for(read(), timeout)
 

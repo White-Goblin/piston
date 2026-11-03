@@ -33,6 +33,37 @@ class ParseTests(unittest.TestCase):
             m.encode(m.event("e", {"x": "a" * m.MAX_FRAME_BYTES}))
 
 
+class ArtworkChunkSizeTests(unittest.TestCase):
+    """A get_artwork result carries at most ARTWORK_CHUNK_BYTES of raw image bytes, base64 encoded (media specs)."""
+    ARTWORK_CHUNK_BYTES = m.ARTWORK_CHUNK_BYTES
+
+    def test_worst_case_chunk_fits_in_a_frame(self):
+        import base64
+        import os
+        from decky_ha import wsproto
+        chunk = os.urandom(self.ARTWORK_CHUNK_BYTES)  # incompressible, JSON escaping adds nothing to base64
+        frame = m.result_ok(4_000_000_000, {"content_type": "image/jpeg", "size": 2 * 1024 * 1024, "offset": 1_000_000,
+                                           "data": base64.b64encode(chunk).decode(), "done": False})
+        text = m.encode(frame)
+        size = len(text.encode())
+        self.assertLess(size, m.MAX_FRAME_BYTES * 0.6)
+        self.assertLess(size, wsproto.MAX_MESSAGE)
+        self.assertEqual(m.parse(text)["data"]["data"], frame["data"]["data"])
+
+
+class ArtworkRequestTests(unittest.TestCase):
+    def test_valid_requests(self):
+        self.assertEqual(m.artwork_request({"id": "abc123"}), ("abc123", 0))
+        self.assertEqual(m.artwork_request({"id": "abc123", "offset": 393216}), ("abc123", 393216))
+
+    def test_invalid_requests(self):
+        for data in (None, [], {}, {"id": ""}, {"id": 5}, {"id": "a" * 65}, {"id": "a", "offset": -1}, {"id": "a", "offset": "0"},
+                     {"id": "a", "offset": True}, {"id": "a", "offset": m.MAX_ARTWORK_BYTES + 1}):
+            with self.assertRaises(m.ProtocolError, msg=repr(data)) as cm:
+                m.artwork_request(data)
+            self.assertEqual(cm.exception.code, m.BAD_REQUEST)
+
+
 class StateSequencingTests(unittest.TestCase):
     def frame(self, **override):
         frame = {"type": "state", "name": "apps", "data": {"x": 1}, "boot_id": "ab12", "seq": 1}
@@ -67,7 +98,7 @@ class NegotiateTests(unittest.TestCase):
         self.assertEqual(m.negotiate(1, 1, 2, 1), 1)
 
     def test_version_two_accepts_only_itself(self):
-        self.assertEqual((PROTOCOL_VERSION, MIN_PROTOCOL_VERSION), (2, 2))
+        self.assertEqual((PROTOCOL_VERSION, MIN_PROTOCOL_VERSION), (3, 3))
         self.assertEqual(m.negotiate(2, 2, 2, 2), 2)
         with self.assertRaises(m.ProtocolError) as cm:
             m.negotiate(2, 2, 1, 1)  # a v1 peer

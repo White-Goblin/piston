@@ -360,6 +360,12 @@ class MediaPlayerState(enum.StrEnum):
     STANDBY = "standby"
 
 
+class MediaType(enum.StrEnum):
+    MUSIC = "music"
+    VIDEO = "video"
+    APP = "app"
+
+
 class MediaPlayerEntity(Entity):
     pass
 
@@ -458,7 +464,7 @@ def install() -> None:
             BinarySensorDeviceClass=types.SimpleNamespace(CONNECTIVITY="connectivity"))
     _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError, ServiceValidationError=ServiceValidationError)
     _module("homeassistant.components.media_player", MediaPlayerEntity=MediaPlayerEntity,
-            MediaPlayerEntityFeature=MediaPlayerEntityFeature, MediaPlayerState=MediaPlayerState,
+            MediaPlayerEntityFeature=MediaPlayerEntityFeature, MediaPlayerState=MediaPlayerState, MediaType=MediaType,
             MediaPlayerDeviceClass=types.SimpleNamespace(TV="tv"))
     _module("homeassistant.components.switch", SwitchEntity=SwitchEntity)
     _module("homeassistant.components.button", ButtonEntity=ButtonEntity,

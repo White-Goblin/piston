@@ -75,6 +75,11 @@ class PairTests(unittest.IsolatedAsyncioTestCase):
             await c.pair(self.transport, "127.0.0.1", self.port, "123456", own=(9, 9))
         self.assertEqual(cm.exception.reason, "version_skew")
 
+    async def test_a_version_2_integration_gets_version_skew(self):
+        with self.assertRaises(c.PairingError) as cm:
+            await c.pair(self.transport, "127.0.0.1", self.port, "123456", own=(2, 2))
+        self.assertEqual(cm.exception.reason, "version_skew")
+
 
 class SessionTests(unittest.IsolatedAsyncioTestCase):
     SECRET = b"s" * 32

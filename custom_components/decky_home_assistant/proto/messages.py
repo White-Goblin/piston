@@ -6,6 +6,11 @@ from . import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
 MAX_FRAME_BYTES = 1_000_000
 MAX_NAME_LEN = 64
 MAX_BOOT_ID_LEN = 32
+MEDIA_GROUP = "media"  # state group: now-playing details (protocol v3)
+CMD_GET_ARTWORK = "get_artwork"  # command: one chunk of the current artwork (protocol v3)
+ARTWORK_CHUNK_BYTES = 384 * 1024  # raw bytes per get_artwork result (about 512 KiB once base64 encoded)
+MAX_ARTWORK_BYTES = 2 * 1024 * 1024  # larger images are not offered at all
+MAX_ART_ID_LEN = 64
 
 # Error codes carried in `result.error.code` (and used as exception codes).
 BAD_REQUEST = "bad_request"
@@ -57,6 +62,16 @@ def state(name: str, data: dict, boot_id: str, seq: int) -> dict:
 
 def event(name: str, data: dict | None = None) -> dict:
     return {"type": "event", "name": name, "data": data or {}}
+
+
+def artwork_request(data) -> tuple:
+    """Validate `get_artwork` data and return (art id, offset); raises ProtocolError(bad_request)."""
+    _require(isinstance(data, dict), "data must be an object")
+    art_id, offset = data.get("id"), data.get("offset", 0)
+    _require(isinstance(art_id, str) and 0 < len(art_id) <= MAX_ART_ID_LEN, "id must be a non-empty string")
+    _require(isinstance(offset, int) and not isinstance(offset, bool) and 0 <= offset <= MAX_ARTWORK_BYTES,
+             "offset must be an integer between 0 and the artwork size limit")
+    return art_id, offset
 
 
 def encode(frame: dict) -> str:

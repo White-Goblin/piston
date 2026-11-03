@@ -79,6 +79,8 @@ class DeckyCoordinator:
         Live data always wins: a group that is already live is left alone, and the first live frame of a restored
         group replaces it and clears its flag. The power state is not restored: it starts as off until connected."""
         for name, data in groups.items():
+            if name == "media":
+                continue  # never restored (live state only)
             if name not in self.groups:
                 self.groups[name] = data
                 self.restored.add(name)
@@ -92,15 +94,23 @@ class DeckyCoordinator:
             self._persist_mac(data["mac"])
         self._notify()
 
+    def _drop_media(self) -> None:
+        """What is playing is live state: it is never stored or restored, and is gone as soon as the device is not
+        known to be awake and connected (the next connection's snapshot brings it back)."""
+        self.groups.pop("media", None)
+        self.restored.discard("media")
+
     def on_event(self, name: str, data: dict) -> None:
         if name == "going_to_sleep":
             # The connection may well survive a short suspend, so do not wait for it to drop
+            self._drop_media()
             self.sleeping = True
             self._set_power("standby")
             self._cancel_off_timer()
             self._notify()
         elif name == "shutting_down":
             # Announced by the device itself: no need to guess from a dropped connection
+            self._drop_media()
             self.sleeping = False
             self._set_power("off")
             self._cancel_off_timer()
@@ -115,6 +125,8 @@ class DeckyCoordinator:
 
     def on_connection(self, up: bool) -> None:
         self.connected = up
+        if not up:
+            self._drop_media()
         self.last_connected = self._now()
         self._cancel_off_timer()
         if up:
