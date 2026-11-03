@@ -39,9 +39,35 @@ class DocsMatchTheCode(unittest.TestCase):
         self.assertIn(str(DEFAULT_PORT), text)
         self.assertIn(SERVICE_TYPE.rstrip("."), text)
 
+    def test_the_protocol_doc_describes_the_current_version_and_every_command_and_event(self):
+        import main
+        from decky_ha.proto import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
+        doc = read("docs", "protocol.md")
+        self.assertIn(f"protocol version {PROTOCOL_VERSION}", doc)
+        self.assertEqual(MIN_PROTOCOL_VERSION, PROTOCOL_VERSION)          # the doc says both sides accept only this version
+        for command in list(main.Plugin()._commands()) + ["resync"]:
+            self.assertIn(f"`{command}", doc, f"command {command} is not in docs/protocol.md")
+        for event in ("going_to_sleep", "shutting_down", "resumed", "toast_click", "pip_signal"):
+            self.assertIn(f"`{event}", doc, f"event {event} is not in docs/protocol.md")
+        for term in ("boot_id", "seq", "coalesced", "version_skew", "app_sync", "ping"):
+            self.assertIn(term, doc, term)
+
+    def test_the_readme_explains_what_the_media_player_shows(self):
+        readme = read("README.md")
+        for term in ("standby", "off", "unavailable", "Turn on", "Repairs", "Download diagnostics", "Reconfigure"):
+            self.assertIn(term, readme, term)
+
+    def test_the_changelog_has_a_section_for_this_version_that_says_to_update_both_sides_together(self):
+        changelog = read("CHANGELOG.md")
+        version = json.loads(read("package.json"))["version"]
+        self.assertIn(f"## {version}", changelog)
+        section = changelog.split(f"## {version}", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("together", section)
+        self.assertIn("protocol version 2", section)
+
     def test_markdown_links_to_local_files_resolve(self):
         import re
-        for doc in ("README.md", "docs/protocol.md", "docs/development.md", "docs/releasing.md"):
+        for doc in ("README.md", "docs/protocol.md", "docs/development.md", "docs/releasing.md", "CHANGELOG.md"):
             base = os.path.dirname(os.path.join(ROOT, doc))
             for target in re.findall(r"\]\(([^)#\s]+)(?:#[^)]*)?\)", read(*doc.split("/"))):
                 if "://" in target or target.startswith("mailto:"):

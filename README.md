@@ -80,7 +80,12 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 
 ## Notes
 
-- **Sleep.** When the device goes to sleep the media player shows standby and the other entities become unavailable; Turn on sends a magic packet and everything comes back after the wake.
+- **Sleep and shutdown.** The device announces every way it goes down: the power button, the idle timer, Home Assistant and the Steam menu. The media player then shows standby (sleep) or off (shutdown) and the other entities become unavailable. Turn on sends a magic packet and everything comes back after the wake.
+- **Waking up.** Home Assistant picks the device up again as soon as it announces itself on the network, and the device re-reads its real state first (a game that ended while it slept does not linger). How soon that is depends on how fast the device's network returns after a wake: a wired link can take ten seconds or more.
+- **What the media player shows.** Idle, playing or paused while the device is awake; standby after a sleep; off after a shutdown or when it cannot be reached; unavailable only for a problem Home Assistant cannot fix by waiting (the device no longer accepts the pairing, or the plugin and the integration versions do not match). The media player stays available while the device is off so that Turn on works.
+- **After a Home Assistant restart.** Home Assistant remembers the apps, controllers and sensors, so the entities exist at once; their values are unknown and the media player shows off until the device reports.
+- **Repairs.** If Home Assistant cannot reach the device for more than 24 hours a Repairs item says so. It goes away by itself when the device connects; if the device is normally switched off you can ignore it.
+- **Diagnostics.** The device page has a Download diagnostics button. The file hides the pairing secret, addresses, MAC addresses, controller serial numbers and the network name, so it is safe to attach to an issue.
 - **Desktop mode.** The plugin keeps running there, so the switch and the sensors keep working. Anything that needs the Steam interface (launching apps, toasts, picture-in-picture, suspend, restart) answers that it only works in game mode.
 - **Volume.** With a soundbar or TV on HDMI CEC you get volume steps and an assumed mute (CEC has no readable level). Otherwise the media player has a real level and mute from the system mixer. This is detected automatically.
 - **Camera picture-in-picture.** H.264 cameras play over WebRTC; cameras Home Assistant's WebRTC cannot carry (for example H.265) fall back to HLS automatically. Unmuted video works; the overlay is dropped when the device sleeps.
