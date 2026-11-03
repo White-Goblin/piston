@@ -3,24 +3,36 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .client import CommandError, DeckyClient, DeviceOffline, VersionSkew
-from .const import CONF_MAC, DEFAULT_OPTIONS, OPT_SENSOR_INTERVAL
+from .const import CONF_MAC, CONF_NAME, DEFAULT_OPTIONS, OPT_SENSOR_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
 OFF_TIMEOUT = 60  # seconds without a connection (and no sleep announcement) before the device counts as off
 
 
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 class DeckyCoordinator:
-    """`power` is "on" (connected), "standby" (announced sleep, then disconnected) or "off" (gone silently)."""
+    """`power` is "on" (connected and awake), "standby" (announced sleep) or "off" (announced shutdown, or gone silently).
+
+    `last_connected` is the last moment there was a connection to the device (set when one starts and when one ends),
+    or None if there never was one since Home Assistant started."""
 
     def __init__(self, hass, entry, *, off_timeout: float = OFF_TIMEOUT,
-                 persist_mac: Callable[[str], None] | None = None):
+                 persist_mac: Callable[[str], None] | None = None, now: Callable[[], datetime] = _utcnow):
         self.hass, self.entry = hass, entry
+        self._now = now
+        self.last_connected: datetime | None = None
+        self._unavailable_logged = False
         self.client: DeckyClient | None = None
         self.pip = None  # PipRelay, set up with the entry
+        self.wake_listener = None  # WakeListener, set up with the entry
         self.groups: dict[str, dict] = {}
         self.connected = False
         self.sleeping = False
@@ -65,29 +77,36 @@ class DeckyCoordinator:
         if name == "going_to_sleep":
             # The connection may well survive a short suspend, so do not wait for it to drop
             self.sleeping = True
-            self.power = "standby"
+            self._set_power("standby")
+            self._cancel_off_timer()
+            self._notify()
+        elif name == "shutting_down":
+            # Announced by the device itself: no need to guess from a dropped connection
+            self.sleeping = False
+            self._set_power("off")
             self._cancel_off_timer()
             self._notify()
         elif name == "resumed":
             self.sleeping = False
             if self.connected:
-                self.power = "on"
+                self._set_power("on")
                 self._notify()
         for callback in list(self._event_listeners.get(name, [])):
             callback(data)
 
     def on_connection(self, up: bool) -> None:
         self.connected = up
+        self.last_connected = self._now()
         self._cancel_off_timer()
         if up:
             self.sleeping = False
             self.problem = None
-            self.power = "on"
+            self._set_power("on")
             if self.client is not None:
                 asyncio.get_running_loop().create_task(self._apply_options())
         elif self.sleeping:
-            self.power = "standby"
-        else:
+            self._set_power("standby")
+        elif self.power != "off":
             self._start_off_timer()  # a silent drop: keep the last state until the timeout
         self._notify()
 
@@ -109,8 +128,19 @@ class DeckyCoordinator:
     def _timed_out(self) -> None:
         self._off_handle = None
         if not self.connected and not self.sleeping:
-            self.power = "off"
+            self._set_power("off")
             self._notify()
+
+    def _set_power(self, power: str) -> None:
+        """Change the power state, logging once when the device goes away and once when it is back (not per attempt)."""
+        self.power = power
+        name = self.entry.data.get(CONF_NAME) or "The device"
+        if power != "on" and not self._unavailable_logged:
+            self._unavailable_logged = True
+            _LOGGER.info("%s is unavailable (%s)", name, power)
+        elif power == "on" and self._unavailable_logged:
+            self._unavailable_logged = False
+            _LOGGER.info("%s is back online", name)
 
     def shutdown(self) -> None:
         self._cancel_off_timer()

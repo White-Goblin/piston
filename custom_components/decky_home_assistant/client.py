@@ -18,7 +18,12 @@ _LOGGER = logging.getLogger(__name__)
 HA_ID = "homeassistant"
 CONNECT_TIMEOUT = 10
 COMMAND_TIMEOUT = 30
-BACKOFF_START, BACKOFF_MAX = 2, 300
+# Reconnect policy: a device that sleeps or is off is probed often right after it went away (a wake is the usual
+# reason it comes back) and less often once it has been gone for a while. Protocol errors have their own delays.
+PROBE_FAST_SECONDS, PROBE_SLOW_SECONDS, PROBE_FAST_WINDOW = 5, 30, 600
+VERSION_SKEW_DELAY = 60
+PROBE_CONNECT_TIMEOUT = 2   # a sleeping host does not answer a connect; do not wait for the OS to give up
+RESOLVE_INTERVAL = 60       # the mDNS lookup can take 3 s when the device is away, so not on every probe
 RESYNC_MIN_INTERVAL = 5  # seconds between resync requests
 
 
@@ -87,9 +92,10 @@ async def _hello(conn: Connection, own: tuple[int, int]) -> dict:
 
 
 async def open_session(transport: Transport, host: str, port: int, device_id: str, secret: bytes,
-                       own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION)) -> Connection:
+                       own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
+                       connect_timeout: float | None = None) -> Connection:
     """Connect and authenticate with the stored secret. The caller owns the returned connection."""
-    conn = await transport.connect(host, port)
+    conn = await asyncio.wait_for(transport.connect(host, port), connect_timeout)
     try:
         hello = await _hello(conn, own)
         if hello["device_id"] != device_id:
@@ -215,6 +221,9 @@ class DeckyClient:
         self._last_seq: dict[str, int] = {}
         self._resync_task: asyncio.Task | None = None
         self._last_resync = float("-inf")
+        self._wake = asyncio.Event()      # set by wake(): the device was seen again, do not wait for the next probe
+        self._attempting = False
+        self._last_resolve = float("-inf")
 
     @property
     def connected(self) -> bool:
@@ -242,6 +251,13 @@ class DeckyClient:
     def set_address(self, host: str, port: int) -> None:
         self.host, self.port = host, port
 
+    def wake(self) -> None:
+        """The device was seen on the network (its mDNS announcement): connect now instead of at the next probe.
+
+        Never starts a second attempt: during one, the signal is kept and the next attempt follows at once if it fails."""
+        if self._conn is None:   # while connected there is nothing to hurry
+            self._wake.set()
+
     async def command(self, name: str, data: dict | None = None) -> dict:
         """Run a command on the device. Raises DeviceOffline at once when not connected, CommandError on a device error."""
         conn = self._conn
@@ -266,14 +282,33 @@ class DeckyClient:
                 future.set_exception(DeviceOffline("the device went offline"))
         self._pending.clear()
 
+    def _probe_delay(self, lost_at: float) -> float:
+        return PROBE_FAST_SECONDS if self._clock() - lost_at < PROBE_FAST_WINDOW else PROBE_SLOW_SECONDS
+
+    async def _wait(self, delay: float) -> None:
+        """Wait for the next attempt: the delay, or a wake() whichever comes first (a wake kept from during the last attempt skips it)."""
+        if self._wake.is_set():
+            self._wake.clear()
+            return
+        sleeper = asyncio.ensure_future(self._sleep(delay))
+        waker = asyncio.ensure_future(self._wake.wait())
+        try:
+            await asyncio.wait({sleeper, waker}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            sleeper.cancel()
+            waker.cancel()
+        self._wake.clear()
+
     async def _run(self) -> None:
-        delay = BACKOFF_START
+        lost_at = self._clock()  # the fast probing window starts when we start or lose the device
         while not self._stopped:
+            delay = None
+            self._attempting = True
             try:
-                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own)
+                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own,
+                                          PROBE_CONNECT_TIMEOUT)
                 self._conn = conn
                 self._boot_id, self._last_seq = None, {}
-                delay = BACKOFF_START
                 self._on_connection(True)
                 await self._read_loop(conn)
             except asyncio.CancelledError:
@@ -283,26 +318,28 @@ class DeckyClient:
                 return  # a wrong secret will not fix itself: wait for re-pairing
             except VersionSkew as e:
                 self._on_problem(e)
-                delay = max(delay, 60)  # an update fixes this; do not hammer the device
+                delay = VERSION_SKEW_DELAY  # an update fixes this; do not hammer the device
             except (ConnectionClosed, OSError, asyncio.TimeoutError) as e:
                 _LOGGER.debug("connection to %s:%s failed: %s", self.host, self.port, e)
             except Exception:  # noqa: BLE001
                 _LOGGER.exception("unexpected error in the device connection")
             finally:
+                self._attempting = False
                 if self._conn is not None:
                     await self._conn.close()
                     self._conn = None
+                    lost_at = self._clock()
                     self._on_connection(False)
                 self._fail_pending()
-            if self._resolver is not None:
+            if self._resolver is not None and self._clock() - self._last_resolve >= RESOLVE_INTERVAL:
+                self._last_resolve = self._clock()
                 try:
                     found = await self._resolver()
                 except Exception:  # noqa: BLE001
                     found = None
                 if found:
                     self.set_address(*found)
-            await self._sleep(delay)
-            delay = min(delay * 2, BACKOFF_MAX)
+            await self._wait(delay if delay is not None else self._probe_delay(lost_at))
 
     def _apply_state(self, frame: dict) -> None:
         """Deliver a state frame unless it is stale; a gap in a group's seq is applied, then repaired by one resync.

@@ -161,7 +161,7 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
         import main
         from custom_components.decky_home_assistant.client import DeckyClient
         from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
-        from . import use_temp_settings_dir
+        from . import plugin_environment_patches, use_temp_settings_dir
         from .stdlib_transport import StdTransport
 
         use_temp_settings_dir()
@@ -171,7 +171,8 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
                   mock.patch("decky_ha.audio.AudioMixin._cec_audio_address", lambda self: None),
                   mock.patch.object(main.Plugin, "_read_sensors", lambda self: {}),
                   mock.patch.object(main.Plugin, "_start_http_server", mock.AsyncMock()),
-                  mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 1, "muted": False})):
+                  mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 1, "muted": False}),
+                  *plugin_environment_patches()):
             p.start()
             self.addCleanup(p.stop)
         self.secret = b"p" * 32

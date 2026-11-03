@@ -44,6 +44,78 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.coord.on_connection(False)
         self.assertFalse(sensor.is_on)
 
+    # --- power model: shutdown announcement, silent loss, logging, last_connected ----------
+
+    LOGGER = "custom_components.decky_home_assistant.coordinator"
+
+    async def test_a_shutdown_announcement_is_off_at_once_without_waiting_for_the_timeout(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("shutting_down", {"reason": "shutdown"})
+        self.assertEqual((self.coord.power, self.coord.sleeping), ("off", False))
+        self.assertIsNone(self.coord._off_handle)
+        self.coord.on_connection(False)                    # the connection then drops: still off, no timer to start
+        self.assertEqual(self.coord.power, "off")
+        self.assertIsNone(self.coord._off_handle)
+
+    async def test_a_shutdown_while_asleep_is_off(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("going_to_sleep", {})
+        self.coord.on_event("shutting_down", {"reason": "restart"})
+        self.assertEqual((self.coord.power, self.coord.sleeping), ("off", False))
+
+    async def test_a_connection_after_a_shutdown_is_on_again(self):
+        self.coord.on_event("shutting_down", {"reason": "shutdown"})
+        self.coord.on_connection(True)
+        self.assertEqual(self.coord.power, "on")
+
+    async def test_standby_after_a_sleep_announcement_does_not_start_the_off_timer(self):
+        self.coord.on_connection(True)
+        self.coord.on_event("going_to_sleep", {})
+        self.coord.on_connection(False)
+        self.assertEqual(self.coord.power, "standby")
+        self.assertIsNone(self.coord._off_handle)
+
+    async def test_a_silent_drop_becomes_off_after_the_timeout(self):
+        self.coord.on_connection(True)
+        self.coord.on_connection(False)
+        self.assertEqual(self.coord.power, "on")           # kept until the timeout
+        self.assertIsNotNone(self.coord._off_handle)
+        await asyncio.sleep(0.25)
+        self.assertEqual(self.coord.power, "off")
+
+    async def test_unavailable_and_back_online_are_each_logged_once(self):
+        with self.assertLogs(self.LOGGER, "INFO") as logs:
+            self.coord.on_connection(True)
+            self.coord.on_event("going_to_sleep", {})      # unavailable (standby)
+            self.coord.on_connection(False)
+            self.coord.on_event("shutting_down", {})       # standby -> off: not logged again
+            await asyncio.sleep(0.25)
+            self.coord.on_connection(True)                 # back online
+            self.coord.on_connection(True)
+        messages = [m.split(":", 2)[-1] for m in logs.output]
+        self.assertEqual(sum("unavailable" in m for m in messages), 1)
+        self.assertEqual(sum("back online" in m for m in messages), 1)
+
+    async def test_a_second_outage_is_logged_again(self):
+        with self.assertLogs(self.LOGGER, "INFO") as logs:
+            for _ in range(2):
+                self.coord.on_connection(True)
+                self.coord.on_event("going_to_sleep", {})
+        self.assertEqual(sum("unavailable" in m for m in logs.output), 2)
+        self.assertEqual(sum("back online" in m for m in logs.output), 1)
+
+    async def test_last_connected_is_the_last_moment_there_was_a_connection(self):
+        from datetime import datetime, timezone
+        clock = [datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc)]
+        coord = DeckyCoordinator(self.hass, entry(), off_timeout=0.1, now=lambda: clock[0])
+        self.addCleanup(coord.shutdown)
+        self.assertIsNone(coord.last_connected)
+        coord.on_connection(True)
+        self.assertEqual(coord.last_connected, clock[0])
+        clock[0] = datetime(2026, 11, 6, 8, 0, tzinfo=timezone.utc)      # three days connected, then it drops
+        coord.on_connection(False)
+        self.assertEqual(coord.last_connected, clock[0])                  # not the start of the connection
+
     async def test_sleep_announcement_gives_standby_immediately(self):
         self.coord.on_connection(True)
         self.coord.on_event("going_to_sleep", {})

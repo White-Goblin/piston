@@ -2,25 +2,10 @@ import asyncio
 import unittest
 from unittest import mock
 
-from . import fake as fake_decky, use_temp_settings_dir, wsclient
+from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir, wsclient
 from decky_ha import server as server_module
 from decky_ha.proto import PROTOCOL_VERSION, auth, messages as m, pake
 import main
-
-
-class StubLifecycle:
-    """Stands in for decky_ha.lifecycle.Lifecycle so tests never start gdbus or take a real inhibitor."""
-    instances = []
-
-    def __init__(self, **callbacks):
-        self.callbacks, self.active, self.protecting, self.started, self.stopped = callbacks, False, False, False, False
-        StubLifecycle.instances.append(self)
-
-    async def start(self):
-        self.started = True
-
-    async def stop(self):
-        self.stopped = True
 
 
 class PluginTests(unittest.IsolatedAsyncioTestCase):
@@ -31,7 +16,6 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin = main.Plugin()
         patches = [
             mock.patch.object(main, "DEFAULT_PORT", 0),
-            mock.patch("decky_ha.state.Lifecycle", StubLifecycle),
             mock.patch("decky_ha.advertise.outbound_ip", lambda: None),
             mock.patch("decky_ha.state.wol_info", lambda: {"interface": "", "error": "none"}),
             mock.patch("decky_ha.audio.AudioMixin._cec_audio_address", lambda self: None),
@@ -39,7 +23,7 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(main.Plugin, "_start_http_server", mock.AsyncMock()),
             mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 30, "muted": False}),
         ]
-        for p in patches:
+        for p in patches + plugin_environment_patches():
             p.start()
             self.addCleanup(p.stop)
         await self.plugin._main()

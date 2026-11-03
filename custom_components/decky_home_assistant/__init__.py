@@ -11,7 +11,7 @@ from . import config_flow
 from .client import DeckyClient, VersionSkew, send_unpair
 from .const import CONF_DEVICE_ID, CONF_HOST, CONF_MAC, CONF_NAME, CONF_PORT, CONF_SECRET, DEFAULT_PORT, DOMAIN, PLATFORMS
 from .coordinator import DeckyCoordinator
-from .discovery import resolve_address
+from .discovery import WakeListener, resolve_address
 from .pip import PipRelay
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,6 +26,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     def persist_mac(mac: str) -> None:
         hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAC: mac})
+
+    def persist_address(host: str, port: int) -> None:
+        hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_HOST: host, CONF_PORT: port})
 
     coordinator = DeckyCoordinator(hass, entry, persist_mac=persist_mac)
 
@@ -55,6 +58,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.pip.start()
     entry.runtime_data = coordinator
     await client.start()
+    coordinator.wake_listener = WakeListener(hass, data[CONF_DEVICE_ID], client, persist_address)
+    await coordinator.wake_listener.start()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_options_updated))
     return True
@@ -71,6 +76,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator: DeckyCoordinator = entry.runtime_data
         coordinator.pip.stop()
         coordinator.shutdown()
+        await coordinator.wake_listener.stop()
         await coordinator.client.stop()
     return unloaded
 
