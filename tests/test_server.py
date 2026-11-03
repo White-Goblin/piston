@@ -112,6 +112,12 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((r["error"]["code"], r["peer"]), (m.VERSION_SKEW, "old"))
         self.assertEqual(await c.recv(), ("close", 4000))
 
+    async def test_a_version_2_peer_gets_version_skew(self):
+        c, _ = await self.connect({"type": "hello", "proto": 2, "min_proto": 2, "device_id": "ha"})
+        r = await c.recv()
+        self.assertEqual((r["error"]["code"], r["peer"]), (m.VERSION_SKEW, "old"))
+        self.assertEqual(await c.recv(), ("close", 4000))
+
     async def test_malformed_frame_is_rejected(self):
         c = await self.login()
         await c.send("not json")

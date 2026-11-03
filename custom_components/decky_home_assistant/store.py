@@ -11,6 +11,7 @@ entity can exist at startup without showing a stale reading as live:
 | controllers | seen (serial and name of every controller ever seen)      | connected (levels, charging)              |
 | sensors     | keys (the names of the readings, as `{"keys": [...]}`)    | the readings                              |
 | pip         | nothing                                                   | everything                                |
+| media       | nothing                                                   | everything (what is playing is live)      |
 
 The file is `.storage/decky_home_assistant.<entry_id>`. It also records `last_connected`, the last moment there was a
 connection to the device (the unreachable-too-long repair issue is measured from it).

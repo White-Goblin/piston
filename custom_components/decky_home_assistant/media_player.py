@@ -1,12 +1,15 @@
 """The device as a media player: power, apps as sources, transport keys and volume."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from homeassistant.components.media_player import (
-    MediaPlayerDeviceClass, MediaPlayerEntity, MediaPlayerEntityFeature, MediaPlayerState,
+    MediaPlayerDeviceClass, MediaPlayerEntity, MediaPlayerEntityFeature, MediaPlayerState, MediaType,
 )
 
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
+from .artwork import ArtworkFetcher
 from .const import CONF_MAC, OPT_TURN_OFF
 from .entity import DeckyEntity
 from .wol import send_magic_packet
@@ -22,6 +25,7 @@ FEATURES = (
     | MediaPlayerEntityFeature.VOLUME_MUTE | MediaPlayerEntityFeature.VOLUME_STEP
 )
 SYSTEM_VOLUME_STEP = 5
+CONTENT_TYPES = {"video": MediaType.VIDEO, "app": MediaType.APP}  # this player is for video; the Steam fallback is an app
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -35,6 +39,7 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
     def __init__(self, coordinator):
         super().__init__(coordinator, "media_player")
         self._assumed_muted = False  # over CEC, mute is a toggle with no readable state
+        self._artwork = ArtworkFetcher(coordinator.async_command, lambda: self._media.get("art") or None)
 
     @property
     def available(self) -> bool:
@@ -49,6 +54,11 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
         return self.coordinator.groups.get("apps", {})
 
     @property
+    def _media(self) -> dict:
+        """What is playing (the `media` group), empty when nothing is. Live state: never restored."""
+        return self.coordinator.groups.get("media") or {}
+
+    @property
     def _audio(self) -> dict:
         return self.coordinator.groups.get("audio", {})
 
@@ -59,10 +69,14 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
             return MediaPlayerState.OFF
         if power == "standby":
             return MediaPlayerState.STANDBY
+        playback = self._apps_group.get("playback")
         if not self._apps_group.get("running"):
+            # No Steam app, but a player of its own (desktop mode): its playback status is the state
+            if self._media and playback in ("playing", "paused"):
+                return MediaPlayerState.PAUSED if playback == "paused" else MediaPlayerState.PLAYING
             return MediaPlayerState.IDLE
         # The app's own playback status when it reports one (MPRIS), otherwise assume it is playing
-        return MediaPlayerState.PAUSED if self._apps_group.get("playback") == "paused" else MediaPlayerState.PLAYING
+        return MediaPlayerState.PAUSED if playback == "paused" else MediaPlayerState.PLAYING
 
     @property
     def supported_features(self):
@@ -99,11 +113,50 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
 
     @property
     def media_title(self):
-        return self._apps_group.get("name") or None
+        return self._media.get("title") or self._apps_group.get("name") or None
+
+    @property
+    def media_artist(self):
+        return self._media.get("artist") or None
+
+    @property
+    def media_album_name(self):
+        return self._media.get("album") or None
+
+    @property
+    def media_content_type(self):
+        return CONTENT_TYPES.get(self._media.get("kind"))
+
+    @property
+    def media_duration(self):
+        duration = self._media.get("duration")
+        return round(duration) if isinstance(duration, (int, float)) else None
+
+    @property
+    def media_position(self):
+        position = self._media.get("position")
+        return round(position) if isinstance(position, (int, float)) and self.media_duration is not None else None
+
+    @property
+    def media_position_updated_at(self):
+        """When the position was read, by the device's clock (both clocks are normally synchronized)."""
+        at = self._media.get("position_at")
+        if self.media_position is None or not isinstance(at, (int, float)):
+            return None
+        return datetime.fromtimestamp(at, tz=timezone.utc)
 
     @property
     def app_name(self):
         return self._apps_group.get("name") or None
+
+    @property
+    def media_image_hash(self):
+        """Names the current image (its content hash); Home Assistant asks for the bytes only when this changes."""
+        return self._media.get("art") or None
+
+    async def async_get_media_image(self):
+        """(bytes, content type) fetched from the device in chunks, or (None, None)."""
+        return await self._artwork.get()
 
     @property
     def volume_level(self):
@@ -120,7 +173,7 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
     @property
     def extra_state_attributes(self) -> dict:
         return {"steam_screen": self._apps_group.get("screen"), "audio_mode": self._audio.get("mode"),
-                "playback": self._apps_group.get("playback")}
+                "playback": self._apps_group.get("playback"), "media_source": self._media.get("source")}
 
     # --- commands -------------------------------------------------------------
 

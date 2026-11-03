@@ -51,6 +51,14 @@ class RestoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sensors", coord.restored)
         self.assertEqual(coord.groups["apps"], {"apps": [], "running": False})
 
+    async def test_media_is_never_stored_or_restored(self):
+        live = {**LIVE, "media": {"title": "Ep", "art": "abc", "kind": "video", "source": "mpris"}}
+        self.assertNotIn("media", stable_subset(live))
+        coord = make_coordinator()
+        coord.restore({"media": {"title": "stale"}, **restored_groups(STORED)}, None)
+        self.assertNotIn("media", coord.groups)
+        self.assertNotIn("media", coord.restored)
+
     async def test_live_data_is_never_overwritten_by_a_restore(self):
         coord = make_coordinator()
         coord.on_state("audio", {"mode": "cec"})

@@ -45,6 +45,18 @@ def _anonymous_controllers(groups: dict) -> dict:
     return {**groups, "controllers": {**controllers, "connected": renamed}}
 
 
+def _private_media(groups: dict) -> dict:
+    """What is playing is viewing history: keep the shape of the media group (source, kind, progress, whether there is an
+    image) and drop the text and the image id."""
+    media = groups.get("media")
+    if not isinstance(media, dict):
+        return groups
+    shown = {k: ("**REDACTED**" if k in ("title", "artist", "album") else v) for k, v in media.items() if k != "art"}
+    if media.get("art"):
+        shown["has_art"] = True
+    return {**groups, "media": shown}
+
+
 async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
     coordinator = entry.runtime_data
     client = coordinator.client
@@ -58,6 +70,6 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         },
         "client": {"probe_mode": getattr(client, "probe_mode", None), "failed_attempts": getattr(client, "failed_attempts", None),
                    "boot_id": getattr(client, "boot_id", None)},
-        "groups": _anonymous_controllers(coordinator.groups),
+        "groups": _private_media(_anonymous_controllers(coordinator.groups)),
     }
     return async_redact_data(_plain(report), TO_REDACT)

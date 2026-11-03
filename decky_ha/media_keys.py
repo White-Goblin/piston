@@ -9,6 +9,7 @@ import time
 
 import decky
 
+from . import media_model, mpris_meta
 from .proto import messages as m
 
 MPRIS_PREFIX = "org.mpris.MediaPlayer2."
@@ -58,12 +59,13 @@ class VirtualKeyboard:
 class MediaKeyMixin:
     keyboard: VirtualKeyboard | None = None
 
-    def _mpris_statuses(self) -> list:
-        """[(bus name, "Playing" | "Paused" | "Stopped" | "")] for every MPRIS player on the session bus."""
+    def _read_players(self):
+        """Blocking. [{"name", "status": "Playing" | "Paused" | "Stopped" | "", "meta": {}, "position": None}] for every MPRIS
+        player on the session bus, or None when the bus could not be listed."""
         try:
             listing = self._busctl("list", "--no-legend")
         except (RuntimeError, OSError, subprocess.SubprocessError):
-            return []
+            return None
         found = []
         for line in listing.splitlines():
             if not line.startswith(MPRIS_PREFIX):
@@ -73,8 +75,22 @@ class MediaKeyMixin:
                 raw = self._busctl("get-property", name, MPRIS_PATH, MPRIS_PLAYER, "PlaybackStatus")
             except (RuntimeError, OSError, subprocess.SubprocessError):
                 raw = ""
-            found.append((name, next((st for st in ("Playing", "Paused", "Stopped") if f'"{st}"' in raw), "")))
+            status = next((st for st in ("Playing", "Paused", "Stopped") if f'"{st}"' in raw), "")
+            found.append({"name": name, "status": status, "meta": {}, "position": None})
         return found
+
+    def _read_details(self, name: str) -> tuple:
+        """Blocking. (metadata, position in seconds | None) of one player; raises when the bus call fails."""
+        meta = mpris_meta.parse_metadata(self._busctl("get-property", name, MPRIS_PATH, MPRIS_PLAYER, "Metadata"))
+        try:
+            position = mpris_meta.parse_position(self._busctl("get-property", name, MPRIS_PATH, MPRIS_PLAYER, "Position"))
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            position = None  # some players have no position
+        return meta, position
+
+    def _mpris_statuses(self) -> list:
+        """[(bus name, "Playing" | "Paused" | "Stopped" | "")] for every MPRIS player on the session bus."""
+        return [(p["name"], p["status"]) for p in self._read_players() or []]
 
     def _mpris_players(self) -> list:
         """Bus names of MPRIS players, the playing ones first."""
@@ -89,13 +105,26 @@ class MediaKeyMixin:
                 return status.lower()
         return "unknown"
 
+    def _offered_apps(self) -> list:
+        return self._load_settings()["apps"]
+
+    async def _update_media(self, players) -> None:
+        """Hook: the media group follows the players (see media.py)."""
+
     async def _refresh_playback(self) -> None:
-        """Update the apps group when the playback status changed (nothing is playing without a running app)."""
+        """Update the apps group when the playback status changed, then the media group from the same read."""
+        players = await asyncio.get_running_loop().run_in_executor(None, self._read_players)
+        listed = players or []
         status = "unknown"
         if self.app_state["running"]:
-            status = await asyncio.get_running_loop().run_in_executor(None, self._playback_status)
+            statuses = {p["status"] for p in listed}  # nothing is playing without a running app
+            status = next((st.lower() for st in ("Playing", "Paused", "Stopped") if st in statuses), "unknown")
+        elif getattr(self, "session", "") == "desktop":  # no app to ask about: the player itself is the media (desktop mode)
+            chosen = media_model.choose_player(listed, None)
+            status = chosen["status"].lower() if chosen else "unknown"
         if status != self.app_state.get("playback"):
             self._set_app_state(playback=status)
+        await self._update_media(players)
 
     async def _playback_loop(self) -> None:
         while True:
