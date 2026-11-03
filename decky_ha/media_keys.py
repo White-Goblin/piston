@@ -119,7 +119,7 @@ class MediaKeyMixin:
         if self.app_state["running"]:
             statuses = {p["status"] for p in listed}  # nothing is playing without a running app
             status = next((st.lower() for st in ("Playing", "Paused", "Stopped") if st in statuses), "unknown")
-        elif getattr(self, "session", "") == "desktop":  # no app to ask about: the player itself is the media (desktop mode)
+        else:  # no Steam app (desktop mode, or Steam reports none): a Playing or Paused player is still the media
             chosen = media_model.choose_player(listed, None)
             status = chosen["status"].lower() if chosen else "unknown"
         if status != self.app_state.get("playback"):

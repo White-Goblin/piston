@@ -34,6 +34,14 @@ State groups: `device` (id, name, MAC, broadcast address, Wake on LAN facts, pro
 
 Events: `going_to_sleep {reason: "suspend"}`, `shutting_down {reason: "shutdown" | "restart"}`, `resumed`, `toast_click {id, at}`, `pip_signal {session, kind: start | offer | candidate | hls | close, ...}`. The three power events are described under [Sleep, shutdown and wake](#sleep-shutdown-and-wake).
 
+## What is playing and its picture
+
+The `media` state group describes what the chosen player is playing, and is `{}` when nothing is. Fields (all optional except where noted): `title` (at most 255 characters), `artist`, `album`, `kind` (`video` for a player, `app` for the Steam fallback), `duration` and `position` (seconds; absent for a live stream), `position_at` (the device's wall-clock time of that position, in seconds since 1970), `art` (an image id, absent when there is no picture) and `source` (`mpris` or `steam`). The group is live state: it is pushed when something changes (a seek or a play/pause change pushes a new position, normal playback does not), cleared when the player or the app goes away, and never stored by Home Assistant.
+
+Choosing the player: a playing MPRIS player wins; a paused one is used only when no Steam game is running; stopped players count as nothing. Without a player, the running app gives its name and its Steam image (`source` is `steam`).
+
+The picture never travels in a state frame. `art` is the first 16 hex digits of the SHA-256 of the image. Home Assistant asks for the bytes with `get_artwork {id, offset}`: each result carries up to 384 KiB of the image, base64 encoded (`{content_type, size, offset, data, done}`), and Home Assistant asks again with the next offset until `done`. If the image changed meanwhile the device answers `not_running` and Home Assistant starts over with the new id; it also checks that the bytes hash to the id. The device accepts `data:`, `file:`, `http:` and `https:` art URLs from the player (redirects only to http or https) and Steam's own artwork files; an image over 2 MiB, or one that is not a JPEG, PNG, GIF or WebP, is dropped and the metadata is shown without a picture. Nothing is resized.
+
 ## State sequencing and resync
 
 Every `state` frame carries `boot_id`, a random string that is new each time the plugin's server starts, and `seq`, a counter per state group that starts at 1 and goes up by one for every push of that group.

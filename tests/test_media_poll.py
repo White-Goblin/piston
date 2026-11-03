@@ -201,6 +201,14 @@ class MediaPollTests(unittest.IsolatedAsyncioTestCase):
         await self.poll()
         self.assertEqual(self.h.app_state["playback"], "paused")
 
+    async def test_steam_reporting_no_app_still_follows_the_player(self):
+        self.jellyfin()
+        await self.poll()
+        self.assertEqual(self.h.app_state["playback"], "playing")
+        del self.h.players[JELLYFIN]
+        await self.poll()
+        self.assertEqual(self.h.app_state["playback"], "unknown")
+
     async def test_one_failed_poll_keeps_the_group_two_clear_it(self):
         self.jellyfin()
         await self.poll()
