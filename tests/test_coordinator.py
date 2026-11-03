@@ -4,6 +4,7 @@ from unittest import mock
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.issue_registry import IssueRegistry
 
 import custom_components.decky_home_assistant as integration
@@ -208,6 +209,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
 class SetupTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        Store.reset()
         self.box = {"secret": SECRET}
         self.mgr = PairingManager(lambda: self.box["secret"], lambda s: self.box.update(secret=s))
         self.received = []
@@ -276,6 +278,52 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         await self.wait_for(lambda: self.entry.runtime_data.connected)
         self.assertTrue(await integration.async_unload_entry(self.hass, self.entry))
         self.assertFalse(self.entry.runtime_data.client.connected)
+
+    async def test_stable_state_is_stored_after_the_delay_and_not_for_every_reading(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        coord = self.entry.runtime_data
+        await self.wait_for(lambda: coord.connected and coord.groups.get("device"))
+        coord.on_state("sensors", {"cpu_load": 1})
+        delays = len(Store.delays)
+        for load in range(2, 12):
+            coord.on_state("sensors", {"cpu_load": load})        # readings change, the sensor keys do not
+        self.assertEqual(len(Store.delays), delays)
+        await coord.store._store.fire_delay()
+        key, data = Store.writes[-1]
+        self.assertEqual(key, "decky_home_assistant.e1")
+        self.assertEqual(data["groups"]["sensors"], {"keys": ["cpu_load"]})
+        self.assertEqual(data["groups"]["device"]["mac"], "aa:bb:cc:dd:ee:ff")
+
+    async def test_unload_saves_at_once_while_the_connection_state_is_known(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        await self.wait_for(lambda: self.entry.runtime_data.connected)
+        before = len(Store.writes)
+        await integration.async_unload_entry(self.hass, self.entry)
+        self.assertEqual(len(Store.writes), before + 1)
+        self.assertIsNotNone(Store.writes[-1][1]["last_connected"])      # connected at that moment: now
+
+    async def test_stopping_home_assistant_saves(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        await self.wait_for(lambda: self.entry.runtime_data.connected)
+        before = len(Store.writes)
+        await self.hass.bus.fire("homeassistant_stop")
+        self.assertEqual(len(Store.writes), before + 1)
+
+    async def test_removing_the_entry_deletes_its_stored_state(self):
+        Store.files["decky_home_assistant.e1"] = {"version": 1, "data": {"groups": {}}}
+        await integration.async_remove_entry(self.hass, self.entry)
+        self.assertNotIn("decky_home_assistant.e1", Store.files)
+
+    async def test_removing_the_entry_also_removes_the_unreachable_issue(self):
+        await integration.async_remove_entry(self.hass, self.entry)
+        self.assertIn("device_unreachable_dev123abc456", IssueRegistry.deleted)
+
+    async def test_setup_starts_the_unreachable_monitor(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        self.assertIsNotNone(self.entry.runtime_data.unreachable)
 
     async def test_removing_the_entry_resets_the_device(self):
         await integration.async_remove_entry(self.hass, self.entry)

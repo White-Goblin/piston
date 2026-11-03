@@ -135,6 +135,10 @@
     "version_skew_new": {
       "title": "The Decky Home Assistant integration is too old for {name}",
       "description": "Update the integration in HACS, then restart Home Assistant."
+    },
+    "device_unreachable": {
+      "title": "{name} has not been reachable for over a day",
+      "description": "Home Assistant could not connect to {name} for more than 24 hours. If the device is normally switched off, you can ignore this; the message disappears when it connects again. Otherwise check that it is on, that the Decky Home Assistant plugin is running on it and that it is on the same network."
     }
   },
   "selector": {

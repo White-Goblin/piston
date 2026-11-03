@@ -33,7 +33,10 @@ class DeckyCoordinator:
         self.client: DeckyClient | None = None
         self.pip = None  # PipRelay, set up with the entry
         self.wake_listener = None  # WakeListener, set up with the entry
+        self.store = None  # DeckyStore, set up with the entry
+        self.unreachable = None  # UnreachableMonitor, set up with the entry
         self.groups: dict[str, dict] = {}
+        self.restored: set[str] = set()  # groups that came from the stored state of the last run and are not live yet
         self.connected = False
         self.sleeping = False
         self.power = "off"
@@ -47,9 +50,12 @@ class DeckyCoordinator:
 
     @property
     def online(self) -> bool:
-        """Reachable and awake. A suspended device may keep its TCP connection for a while, so `connected`
-        alone would show stale data as live."""
-        return self.connected and not self.sleeping
+        """Reachable, awake and nothing wrong with the pairing or versions. A suspended device may keep its TCP
+        connection for a while (and stays open briefly after a shutdown announcement), so `connected` alone would show stale
+        data as live. Every entity except the media
+        player is available only while this is true; the media player stays available while the device is merely
+        asleep or off (turn_on must keep working) and goes unavailable only for a problem."""
+        return self.connected and not self.sleeping and self.power == "on" and self.problem is None
 
     # --- listeners -----------------------------------------------------------
 
@@ -67,8 +73,20 @@ class DeckyCoordinator:
 
     # --- input from the client ----------------------------------------------
 
+    def restore(self, groups: dict, last_connected: datetime | None) -> None:
+        """Seed the structure known from the last run (see store.py) so entities exist before the device connects.
+        Live data always wins: a group that is already live is left alone, and the first live frame of a restored
+        group replaces it and clears its flag. The power state is not restored: it starts as off until connected."""
+        for name, data in groups.items():
+            if name not in self.groups:
+                self.groups[name] = data
+                self.restored.add(name)
+        if last_connected is not None and self.last_connected is None:
+            self.last_connected = last_connected
+
     def on_state(self, name: str, data: dict) -> None:
         self.groups[name] = data
+        self.restored.discard(name)
         if name == "device" and data.get("mac") and data["mac"] != self.entry.data.get(CONF_MAC) and self._persist_mac:
             self._persist_mac(data["mac"])
         self._notify()

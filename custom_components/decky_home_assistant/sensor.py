@@ -41,7 +41,8 @@ class DeckySensor(DeckyEntity, SensorEntity):
 
     @property
     def available(self) -> bool:
-        return self.coordinator.online and self._key in self.coordinator.groups.get("sensors", {})
+        return (self.coordinator.online and "sensors" not in self.coordinator.restored
+                and self._key in self.coordinator.groups.get("sensors", {}))
 
     @property
     def native_value(self):

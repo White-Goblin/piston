@@ -34,7 +34,9 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
 
     @property
     def available(self) -> bool:
-        return True  # off and standby are states, not unavailability
+        # Off and standby are states, not unavailability: Home Assistant refuses service calls to an unavailable
+        # entity, and turn_on (Wake on LAN) has to keep working. Only a real problem makes it unavailable.
+        return self.coordinator.problem is None
 
     # --- state ----------------------------------------------------------------
 
@@ -79,6 +81,8 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
 
     @property
     def source(self):
+        if "apps" in self.coordinator.restored:
+            return None  # only the list of apps is known from the last run, not what is running now
         group = self._apps_group
         if group.get("screen") == "desktop":
             return None
