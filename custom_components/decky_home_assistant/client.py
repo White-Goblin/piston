@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol
 
@@ -18,6 +19,7 @@ HA_ID = "homeassistant"
 CONNECT_TIMEOUT = 10
 COMMAND_TIMEOUT = 30
 BACKOFF_START, BACKOFF_MAX = 2, 300
+RESYNC_MIN_INTERVAL = 5  # seconds between resync requests
 
 
 class ConnectionClosed(Exception):
@@ -197,7 +199,8 @@ class DeckyClient:
                  on_connection: Callable[[bool], None], on_problem: Callable[[Exception], None] = lambda e: None,
                  resolver: Callable[[], Awaitable[tuple[str, int] | None]] | None = None,
                  own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
-                 sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT):
+                 sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT,
+                 clock: Callable[[], float] = time.monotonic):
         self._transport, self.host, self.port = transport, host, port
         self._device_id, self._secret = device_id, secret
         self._on_state, self._on_event, self._on_connection, self._on_problem = on_state, on_event, on_connection, on_problem
@@ -207,6 +210,11 @@ class DeckyClient:
         self._next_id = 1
         self._task: asyncio.Task | None = None
         self._stopped = False
+        self._clock = clock
+        self._boot_id: str | None = None  # sequencing, reset on every connection
+        self._last_seq: dict[str, int] = {}
+        self._resync_task: asyncio.Task | None = None
+        self._last_resync = float("-inf")
 
     @property
     def connected(self) -> bool:
@@ -224,6 +232,8 @@ class DeckyClient:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._resync_task is not None:
+            self._resync_task.cancel()
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
@@ -262,6 +272,7 @@ class DeckyClient:
             try:
                 conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own)
                 self._conn = conn
+                self._boot_id, self._last_seq = None, {}
                 delay = BACKOFF_START
                 self._on_connection(True)
                 await self._read_loop(conn)
@@ -293,12 +304,43 @@ class DeckyClient:
             await self._sleep(delay)
             delay = min(delay * 2, BACKOFF_MAX)
 
+    def _apply_state(self, frame: dict) -> None:
+        """Deliver a state frame unless it is stale; a gap in a group's seq is applied, then repaired by one resync.
+
+        The first frame of a group on a connection (the snapshot) and any frame of a new boot_id are taken as they come."""
+        name, boot_id, seq = frame["name"], frame["boot_id"], frame["seq"]
+        if boot_id != self._boot_id:
+            self._boot_id, self._last_seq = boot_id, {}
+        last = self._last_seq.get(name)
+        if last is not None and seq <= last:
+            _LOGGER.debug("dropping stale %s frame (seq %s, have %s)", name, seq, last)
+            return
+        gap = last is not None and seq != last + 1
+        self._last_seq[name] = seq
+        self._on_state(name, frame["data"])
+        if gap:
+            _LOGGER.debug("gap in %s (seq %s after %s): requesting a resync", name, seq, last)
+            self._request_resync()
+
+    def _request_resync(self) -> None:
+        now = self._clock()
+        if (self._resync_task is not None and not self._resync_task.done()) or now - self._last_resync < RESYNC_MIN_INTERVAL:
+            return
+        self._last_resync = now
+        self._resync_task = asyncio.get_running_loop().create_task(self._resync())
+
+    async def _resync(self) -> None:
+        try:
+            await self.command("resync")
+        except (DeviceOffline, CommandError) as e:
+            _LOGGER.debug("resync failed: %s", e)
+
     async def _read_loop(self, conn: Connection) -> None:
         while True:
             frame = await _recv_frame(conn, None)
             kind = frame["type"]
             if kind == "state":
-                self._on_state(frame["name"], frame["data"])
+                self._apply_state(frame)
             elif kind == "event":
                 self._on_event(frame["name"], frame["data"])
             elif kind == "result":

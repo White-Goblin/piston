@@ -131,6 +131,85 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0.02)
         self.assertEqual(self.events, [("going_to_sleep", {})])
 
+    # --- sequencing (protocol v2) ---------------------------------------------
+
+    async def started_with_spy(self, **kw):
+        """A connected client whose commands are recorded; the fake clock is controlled by the test."""
+        self.now = [100.0]
+        client = self.make(clock=lambda: self.now[0], **kw)
+        self.calls = []
+        real = client.command
+
+        async def spy(name, data=None):
+            self.calls.append(name)
+            return await real(name, data)
+
+        client.command = spy
+        await client.start()
+        await asyncio.wait_for(self.connected.wait(), 3)
+        return client
+
+    async def until(self, condition, tries=100):
+        for _ in range(tries):
+            if condition():
+                return
+            await asyncio.sleep(0.01)
+        self.fail("condition not reached")
+
+    async def test_in_order_state_frames_are_applied_without_a_resync(self):
+        await self.started_with_spy()
+        for i in range(3):
+            self.dev.server.push_state("device", {"name": f"v{i}"})
+        await self.until(lambda: len(self.states) == 4)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "v0", "v1", "v2"])
+        self.assertEqual(self.calls, [])
+
+    async def test_stale_or_duplicate_frames_are_dropped(self):
+        await self.started_with_spy()
+        self.dev.server._seq["device"] = 0
+        self.dev.server.push_state("device", {"name": "stale"})   # seq 1 again: not newer than the snapshot
+        self.dev.server.push_state("device", {"name": "stale2"})  # seq 2: newer, applied
+        await self.until(lambda: len(self.states) == 2)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "stale2"])
+        self.assertEqual(self.calls, [])
+
+    async def test_a_gap_is_applied_and_one_resync_requested_and_rate_limited(self):
+        await self.started_with_spy()
+        self.dev.server._seq["device"] += 4
+        self.dev.server.push_state("device", {"name": "after-gap"})
+        await self.until(lambda: [d["name"] for _, d in self.states][-1:] == ["box"] and len(self.states) == 3)
+        self.assertEqual([d["name"] for _, d in self.states], ["box", "after-gap", "box"])  # snapshot from the resync
+        self.assertEqual(self.calls, ["resync"])
+        self.dev.server._seq["device"] += 4                         # a second gap within 5 s
+        self.dev.server.push_state("device", {"name": "again"})
+        await self.until(lambda: len(self.states) == 4)
+        await asyncio.sleep(0.1)
+        self.assertEqual(self.calls, ["resync"])
+        self.now[0] += 6                                            # after the interval a gap is repaired again
+        self.dev.server._seq["device"] += 4
+        self.dev.server.push_state("device", {"name": "third"})
+        await self.until(lambda: self.calls == ["resync", "resync"])
+
+    async def test_a_new_boot_id_resets_tracking_without_a_resync(self):
+        await self.started_with_spy()
+        self.dev.server.boot_id = "newboot"
+        self.dev.server._seq["device"] += 9
+        self.dev.server.push_state("device", {"name": "rebooted"})
+        await self.until(lambda: len(self.states) == 2)
+        self.assertEqual(self.states[-1][1]["name"], "rebooted")
+        self.assertEqual(self.calls, [])
+
+    async def test_tracking_resets_on_reconnect(self):
+        await self.started_with_spy()
+        self.dev.server.push_state("device", {"name": "v"})
+        await self.until(lambda: len(self.states) == 2)
+        self.connected.clear()
+        await self.dev.server.disconnect(1001, "bye")
+        await asyncio.wait_for(self.connected.wait(), 3)
+        await self.until(lambda: len(self.states) == 3)             # the new snapshot (seq 2 again) is applied
+        self.assertEqual(self.states[-1][1]["name"], "box")
+        self.assertEqual(self.calls, [])
+
     async def test_reconnects_after_a_drop_with_backoff_that_resets(self):
         client = self.make()
         await client.start()

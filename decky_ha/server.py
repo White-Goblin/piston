@@ -5,6 +5,7 @@ a newer `launch` supersedes a queued older one.
 """
 import asyncio
 import logging
+import secrets
 from typing import Awaitable, Callable
 
 from . import wsproto
@@ -14,6 +15,7 @@ log = logging.getLogger("decky-ha.server")
 
 CLOSE_VERSION, CLOSE_REPLACED, CLOSE_UNAUTHORIZED, CLOSE_BAD_REQUEST = 4000, 4001, 4002, 4003
 DEFAULT_PORT = 47830
+RESYNC = "resync"  # built-in command: answer ok, then send every state group again
 
 Handler = Callable[[dict], Awaitable[dict | None]]
 
@@ -45,6 +47,9 @@ class ProtocolServer:
         self._hello_extra = hello_extra or (lambda: {})
         self._server = None
         self.conn: _Conn | None = None
+        # Sequencing (protocol v2): a state frame carries this run's boot_id and a per-group counter
+        self.boot_id = secrets.token_hex(8)
+        self._seq: dict[str, int] = {}
 
     @property
     def connected(self) -> bool:
@@ -64,8 +69,14 @@ class ProtocolServer:
     # --- pushes to the connected integration ------------------------------
 
     def push_state(self, name: str, data: dict) -> None:
+        self._seq[name] = self._seq.get(name, 0) + 1
         if self.conn is not None:
-            self.conn.send(m.state(name, data))
+            self.conn.send(m.state(name, data, self.boot_id, self._seq[name]))
+
+    def _snapshot_frame(self, name: str, data: dict) -> dict:
+        """A snapshot carries the group's current seq without counting as a new push (a never-pushed group gets seq 1)."""
+        seq = self._seq[name] = max(self._seq.get(name, 0), 1)
+        return m.state(name, data, self.boot_id, seq)
 
     def push_event(self, name: str, data: dict | None = None) -> None:
         if self.conn is not None:
@@ -171,7 +182,7 @@ class ProtocolServer:
         if self._on_connection:
             self._on_connection(True)
         for name, data in self._snapshot().items():
-            conn.send(m.state(name, data))
+            conn.send(self._snapshot_frame(name, data))
         worker = asyncio.create_task(self._worker(conn))
         pinger = asyncio.create_task(self._pinger(conn))
         try:
@@ -188,6 +199,12 @@ class ProtocolServer:
                 conn.send(m.result_error(frame["id"], m.OFFLINE, "connection closed"))
             conn.pending.clear()
 
+    def _send_resync(self, conn: _Conn) -> None:
+        """Every group again, each counting as a new push so the receiver applies it by its normal seq rule."""
+        for name, data in self._snapshot().items():
+            self._seq[name] = self._seq.get(name, 0) + 1
+            conn.send(m.state(name, data, self.boot_id, self._seq[name]))
+
     async def _pinger(self, conn: _Conn) -> None:
         while not conn.closed:
             await asyncio.sleep(self._ping_interval)
@@ -199,6 +216,10 @@ class ProtocolServer:
     # --- command queue ------------------------------------------------------
 
     def _enqueue(self, conn: _Conn, frame: dict) -> None:
+        if frame["name"] == RESYNC:
+            if any(f["name"] == RESYNC for f in conn.pending):
+                conn.send(m.result_ok(frame["id"], {"coalesced": True}))  # the queued one will send the snapshot
+                return
         if frame["name"] == "launch":
             for old in [f for f in conn.pending if f["name"] == "launch"]:
                 conn.pending.remove(old)
@@ -212,6 +233,10 @@ class ProtocolServer:
                 conn.wake.clear()
                 await conn.wake.wait()
             frame = conn.pending.pop(0)
+            if frame["name"] == RESYNC:
+                conn.send(m.result_ok(frame["id"]))
+                self._send_resync(conn)
+                continue
             handler = self.commands.get(frame["name"])
             if handler is None:
                 conn.send(m.result_error(frame["id"], m.UNSUPPORTED, f"unknown command {frame['name']}"))
