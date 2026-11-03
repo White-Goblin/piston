@@ -15,8 +15,8 @@ entity can exist at startup without showing a stale reading as live:
 The file is `.storage/decky_home_assistant.<entry_id>`. It also records `last_connected`, the last moment there was a
 connection to the device (the unreachable-too-long repair issue is measured from it).
 
-Home Assistant's `Store.async_delay_save` restarts its timer on every call, so a change that happens every few seconds
-would postpone the write for ever. Saves are therefore requested only when the stable data actually changes (sensor
+Home Assistant's `Store.async_delay_save` pushes the write out to `delay` seconds after the LAST call (the earlier timer
+fires, finds a later write time, and reschedules), so a change that happens every few seconds would postpone the write for ever. Saves are therefore requested only when the stable data actually changes (sensor
 readings are not part of it), and a pending save is written when Home Assistant stops. A group that has not been
 reported yet in this run keeps its previously stored value, so a restart is never able to overwrite known structure
 with an empty snapshot.
@@ -153,9 +153,6 @@ class DeckyStore:
         data = self._data()
         self._requested = self._snapshot()
         await self._store.async_save(data)
-
-    async def async_remove(self) -> None:
-        await self._store.async_remove()
 
     @staticmethod
     async def async_remove_file(hass, entry_id: str) -> None:

@@ -223,6 +223,8 @@ class DeckyClient:
         self._last_resync = float("-inf")
         self._wake = asyncio.Event()      # set by wake(): the device was seen again, do not wait for the next probe
         self._attempting = False
+        self._lost_at = self._clock()
+        self.failed_attempts = 0          # consecutive failed attempts since the last connection (for diagnostics)
         self._last_resolve = float("-inf")
 
     @property
@@ -250,6 +252,19 @@ class DeckyClient:
 
     def set_address(self, host: str, port: int) -> None:
         self.host, self.port = host, port
+
+    @property
+    def boot_id(self) -> str | None:
+        return self._boot_id
+
+    @property
+    def probe_mode(self) -> str:
+        """"connected", "fast" or "slow" (the probe cadence), or "stopped" when probing ended (rejected secret)."""
+        if self._conn is not None:
+            return "connected"
+        if self._task is not None and self._task.done():
+            return "stopped"
+        return "fast" if self._clock() - self._lost_at < PROBE_FAST_WINDOW else "slow"
 
     def wake(self) -> None:
         """The device was seen on the network (its mDNS announcement): connect now instead of at the next probe.
@@ -300,7 +315,7 @@ class DeckyClient:
         self._wake.clear()
 
     async def _run(self) -> None:
-        lost_at = self._clock()  # the fast probing window starts when we start or lose the device
+        lost_at = self._lost_at = self._clock()  # the fast probing window starts when we start or lose the device
         while not self._stopped:
             delay = None
             self._attempting = True
@@ -309,6 +324,7 @@ class DeckyClient:
                                           PROBE_CONNECT_TIMEOUT)
                 self._conn = conn
                 self._boot_id, self._last_seq = None, {}
+                self.failed_attempts = 0
                 self._on_connection(True)
                 await self._read_loop(conn)
             except asyncio.CancelledError:
@@ -328,8 +344,10 @@ class DeckyClient:
                 if self._conn is not None:
                     await self._conn.close()
                     self._conn = None
-                    lost_at = self._clock()
+                    lost_at = self._lost_at = self._clock()
                     self._on_connection(False)
+                else:
+                    self.failed_attempts += 1
                 self._fail_pending()
             if self._resolver is not None and self._clock() - self._last_resolve >= RESOLVE_INTERVAL:
                 self._last_resolve = self._clock()

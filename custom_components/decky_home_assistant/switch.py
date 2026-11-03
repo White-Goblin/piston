@@ -10,6 +10,9 @@ from homeassistant.components.switch import SwitchEntity
 from .entity import DeckyEntity
 
 
+# The device runs commands one at a time anyway; one call at a time is the natural limit for a mode switch.
+PARALLEL_UPDATES = 1
+
 async def async_setup_entry(hass, entry, async_add_entities):
     async_add_entities([DesktopModeSwitch(entry.runtime_data)])
 

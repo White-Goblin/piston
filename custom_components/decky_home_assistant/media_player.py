@@ -5,11 +5,15 @@ from homeassistant.components.media_player import (
     MediaPlayerDeviceClass, MediaPlayerEntity, MediaPlayerEntityFeature, MediaPlayerState,
 )
 
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from .const import CONF_MAC, OPT_TURN_OFF
 from .entity import DeckyEntity
 from .wol import send_magic_packet
+
+# Not limited on purpose: the device runs commands one at a time and a newer launch replaces a queued older
+# one (last command wins); serializing the calls here would make the second wait for the first instead.
+PARALLEL_UPDATES = 0
 
 STEAM_SOURCE = "Steam"
 FEATURES = (
@@ -127,7 +131,7 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
         device = self.coordinator.groups.get("device", {})
         mac = device.get("mac") or self.coordinator.entry.data.get(CONF_MAC)
         if not mac:
-            raise HomeAssistantError("The device's MAC address is not known yet. Turn it on once by hand while connected.")
+            raise ServiceValidationError("The device's MAC address is not known yet. Turn it on once by hand while connected.")
         try:
             await send_magic_packet(mac, device.get("broadcast") or "255.255.255.255")
         except (OSError, ValueError) as e:
@@ -143,7 +147,7 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
             return
         appid = self._sources.get(source)
         if appid is None:
-            raise HomeAssistantError(f"Unknown source {source}")
+            raise ServiceValidationError(f"Unknown source {source}")
         await self._command("launch", {"appid": appid})
 
     async def async_media_play(self) -> None:

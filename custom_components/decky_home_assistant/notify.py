@@ -7,6 +7,9 @@ from homeassistant.helpers import entity_platform
 from ._compat import vol
 from .entity import DeckyEntity
 
+# Toasts are shown one after another on the device.
+PARALLEL_UPDATES = 1
+
 ICONS = ["bell", "bolt", "camera", "car", "door", "fire", "home", "light", "lock", "motion", "temperature", "warning", "water"]
 MAX_SECONDS = 600
 DEFAULT_SECONDS = 5

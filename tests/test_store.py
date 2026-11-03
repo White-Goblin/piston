@@ -154,12 +154,10 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
     async def test_remove_deletes_the_file(self):
         self.fx.groups = LIVE
         await self.store.async_save_now()
-        await self.store.async_remove()
-        self.assertNotIn(KEY, Store.files)
-        await self.store.async_save_now()
+        self.assertIn(KEY, Store.files)
         await DeckyStore.async_remove_file(HomeAssistant(), "e1")  # for an entry whose coordinator is gone
         self.assertNotIn(KEY, Store.files)
-        self.assertEqual(Store.removed, [KEY, KEY])
+        self.assertEqual(Store.removed, [KEY])
 
 
 if __name__ == "__main__":

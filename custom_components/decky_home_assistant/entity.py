@@ -1,13 +1,25 @@
 """Base class for the device's entities."""
 from __future__ import annotations
 
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.device_registry import CONNECTION_NETWORK_MAC, DeviceInfo
 from homeassistant.helpers.entity import Entity
 
 from .client import CommandError, DeviceOffline
 from .const import CONF_DEVICE_ID, CONF_NAME, DOMAIN
 from .coordinator import DeckyCoordinator
+from .proto import messages as m
+
+
+def command_failure(error: Exception) -> HomeAssistantError:
+    """The exception Home Assistant should show for a failed device command.
+
+    Wrong input (the device answered bad_request) is a ServiceValidationError: the caller can fix it. Everything else
+    (device offline, refused, timed out) is a HomeAssistantError: the action itself failed."""
+    if isinstance(error, DeviceOffline):
+        return HomeAssistantError("The device is offline")
+    text = getattr(error, "message", "") or getattr(error, "code", "") or str(error)
+    return ServiceValidationError(text) if getattr(error, "code", "") == m.BAD_REQUEST else HomeAssistantError(text)
 
 
 class DeckyEntity(Entity):
@@ -36,10 +48,8 @@ class DeckyEntity(Entity):
         """Run a device command; failures become errors Home Assistant shows to the user."""
         try:
             return await self.coordinator.async_command(name, data)
-        except DeviceOffline:
-            raise HomeAssistantError("The device is offline") from None
-        except CommandError as e:
-            raise HomeAssistantError(e.message or e.code) from None
+        except (DeviceOffline, CommandError) as e:
+            raise command_failure(e) from None
 
 
 def track_new_entities(coordinator: DeckyCoordinator, async_add_entities, build) -> callable:

@@ -319,6 +319,32 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
             await self.until(lambda: len(self.sleeps) >= 2)       # attempts keep ending, nothing hangs
         self.assertEqual(self.sleeps[:2], [5, 5])
 
+    async def test_probe_mode_and_failed_attempts_describe_the_connection_for_diagnostics(self):
+        await self.dev.server.stop()
+        client = self.timed_client()
+        self.assertEqual(client.probe_mode, "fast")                    # not started yet: the fast window runs from the start
+        await client.start()
+        await self.until(lambda: client.failed_attempts >= 3)
+        self.assertEqual(client.probe_mode, "fast")
+        self.now[0] += 700                                              # gone for over 10 minutes
+        self.assertEqual(client.probe_mode, "slow")
+
+    async def test_a_connection_resets_the_failed_attempts_and_reports_the_boot_id(self):
+        client = self.timed_client()
+        await client.start()
+        await self.until(lambda: self.connection == [True])
+        self.assertEqual((client.probe_mode, client.failed_attempts), ("connected", 0))
+        await self.until(lambda: client.boot_id == self.dev.server.boot_id)
+
+    async def test_probe_mode_is_stopped_after_a_rejected_secret(self):
+        client = c.DeckyClient(
+            self.transport, "127.0.0.1", self.port, "dev123", b"w" * 32, on_state=lambda n, d: None, on_event=lambda n, d: None,
+            on_connection=lambda up: None, on_problem=self.problems.append, sleep=self.fake_sleep)
+        self.addAsyncCleanup(client.stop)
+        await client.start()
+        await asyncio.wait_for(client._task, 3)
+        self.assertEqual(client.probe_mode, "stopped")
+
     async def test_the_address_lookup_is_rate_limited(self):
         await self.dev.server.stop()
         lookups = []

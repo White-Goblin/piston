@@ -97,6 +97,12 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum("unavailable" in m for m in messages), 1)
         self.assertEqual(sum("back online" in m for m in messages), 1)
 
+    async def test_after_shutdown_a_late_connection_loss_starts_no_timer(self):
+        self.coord.on_connection(True)
+        self.coord.shutdown()
+        self.coord.on_connection(False)                    # what stopping the client reports while unloading
+        self.assertIsNone(self.coord._off_handle)
+
     async def test_a_second_outage_is_logged_again(self):
         with self.assertLogs(self.LOGGER, "INFO") as logs:
             for _ in range(2):

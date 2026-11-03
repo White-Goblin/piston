@@ -9,6 +9,7 @@
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/White-Goblin/steamos-media-control/issues",
+  "quality_scale": "silver",
   "requirements": [],
   "version": "0.1.1",
   "zeroconf": [

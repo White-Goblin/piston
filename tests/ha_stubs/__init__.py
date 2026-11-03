@@ -102,6 +102,15 @@ class HomeAssistant:
         return asyncio.get_running_loop().create_task(coro)
 
 
+def _async_redact_data(data, to_redact):
+    """homeassistant.components.diagnostics.async_redact_data: replace the value of every key in to_redact, recursively."""
+    if not isinstance(data, (dict, list)):
+        return data
+    if isinstance(data, list):
+        return [_async_redact_data(v, to_redact) for v in data]
+    return {k: ("**REDACTED**" if k in to_redact else _async_redact_data(v, to_redact)) for k, v in data.items()}
+
+
 class Timers:
     """homeassistant.helpers.event.async_track_time_interval: remembers (action, interval); tests call the action."""
     tracked = []
@@ -203,10 +212,13 @@ class ConfigFlow:
     def async_abort(self, *, reason, description_placeholders=None):
         return {"type": "abort", "reason": reason}
 
+    def _get_reconfigure_entry(self):
+        return self.hass.config_entries.async_get_entry(self.context["entry_id"])
+
     def async_update_reload_and_abort(self, entry, *, data_updates=None, **kw):
         entry.data = {**entry.data, **(data_updates or {})}
         self.hass.config_entries.reloaded.append(entry.entry_id)
-        return {"type": "abort", "reason": "reauth_successful"}
+        return {"type": "abort", "reason": "reconfigure_successful" if self.context.get("source") == "reconfigure" else "reauth_successful"}
 
 
 class OptionsFlow:
@@ -356,6 +368,10 @@ class HomeAssistantError(Exception):
     pass
 
 
+class ServiceValidationError(HomeAssistantError):
+    pass
+
+
 class SwitchEntity(Entity):
     pass
 
@@ -437,9 +453,10 @@ def install() -> None:
     _module("homeassistant.helpers.storage", Store=Store)
     _module("homeassistant.helpers.event", async_track_time_interval=Timers.async_track_time_interval)
     _module("homeassistant.components")
+    _module("homeassistant.components.diagnostics", async_redact_data=_async_redact_data)
     _module("homeassistant.components.binary_sensor", BinarySensorEntity=BinarySensorEntity,
             BinarySensorDeviceClass=types.SimpleNamespace(CONNECTIVITY="connectivity"))
-    _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError)
+    _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError, ServiceValidationError=ServiceValidationError)
     _module("homeassistant.components.media_player", MediaPlayerEntity=MediaPlayerEntity,
             MediaPlayerEntityFeature=MediaPlayerEntityFeature, MediaPlayerState=MediaPlayerState,
             MediaPlayerDeviceClass=types.SimpleNamespace(TV="tv"))

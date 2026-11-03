@@ -5,6 +5,9 @@ from homeassistant.components.button import ButtonDeviceClass, ButtonEntity
 
 from .entity import DeckyEntity
 
+# The device runs commands one at a time anyway; one call at a time is the natural limit for restarts.
+PARALLEL_UPDATES = 1
+
 BUTTONS = (
     ("restart_device", "restart"),
     ("restart_steam", "restart_steam"),

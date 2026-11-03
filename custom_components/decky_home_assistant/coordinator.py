@@ -28,6 +28,7 @@ class DeckyCoordinator:
                  persist_mac: Callable[[str], None] | None = None, now: Callable[[], datetime] = _utcnow):
         self.hass, self.entry = hass, entry
         self._now = now
+        self._shut_down = False
         self.last_connected: datetime | None = None
         self._unavailable_logged = False
         self.client: DeckyClient | None = None
@@ -136,6 +137,8 @@ class DeckyCoordinator:
 
     def _start_off_timer(self) -> None:
         self._cancel_off_timer()
+        if self._shut_down:
+            return  # stopping the client reports a lost connection after shutdown(); that must not start a timer again
         self._off_handle = asyncio.get_event_loop().call_later(self._off_timeout, self._timed_out)
 
     def _cancel_off_timer(self) -> None:
@@ -161,6 +164,7 @@ class DeckyCoordinator:
             _LOGGER.info("%s is back online", name)
 
     def shutdown(self) -> None:
+        self._shut_down = True
         self._cancel_off_timer()
 
     # --- output --------------------------------------------------------------

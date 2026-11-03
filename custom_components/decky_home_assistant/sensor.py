@@ -7,6 +7,9 @@ from homeassistant.const import EntityCategory
 from .entity import DeckyEntity, controller_labels, track_new_entities
 from .proto import sensors as table
 
+# Read-only and fed by pushes: nothing to limit.
+PARALLEL_UPDATES = 0
+
 SCREENS = ["game", "steam_over_game", "steam", "desktop"]
 
 
