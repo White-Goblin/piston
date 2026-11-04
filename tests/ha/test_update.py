@@ -223,3 +223,21 @@ async def test_a_failed_target_is_not_sent_again_on_reconnect(hass, loaded, devi
 async def test_without_a_readable_integration_version_updates_are_off(hass):
     with mock.patch("homeassistant.loader.async_get_integration", side_effect=RuntimeError("no such integration")):
         assert await _real_integration_version(hass) is None
+
+
+async def test_while_decky_waits_for_the_user_the_entity_and_repairs_say_what_to_do(hass, loaded, device, wait_until):
+    await wait_until(lambda: device.updates)
+    device.server.push_update_status("waiting_for_confirmation", "0.4.1")
+    notice = f"plugin_update_confirm_{DEVICE_ID}"
+    await wait_until(lambda: ir.async_get(hass).async_get_issue(DOMAIN, notice))
+    entity = hass.states.get(UPDATE)
+    assert entity.attributes["update_state"] == "waiting_for_confirmation"
+    assert entity.attributes["in_progress"] is True
+    assert "Decky Loader dialog" in entity.attributes["release_summary"]
+    found = ir.async_get(hass).async_get_issue(DOMAIN, notice)
+    assert (found.is_fixable, found.severity, found.translation_key) == (False, ir.IssueSeverity.WARNING, "plugin_update_confirm")
+    device.server.push_update_status("failed", "0.4.1", "not_confirmed")
+    await wait_until(lambda: ir.async_get(hass).async_get_issue(DOMAIN, notice) is None)
+    failed = ir.async_get(hass).async_get_issue(DOMAIN, f"plugin_update_failed_{DEVICE_ID}")
+    assert "not approved" in failed.translation_placeholders["reason"]
+    assert hass.states.get(UPDATE).attributes["release_summary"] is None

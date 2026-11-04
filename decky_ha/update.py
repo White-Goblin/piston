@@ -7,7 +7,6 @@ State machine: idle -> downloading -> waiting_for_ui -> installing -> (plugin re
 import asyncio
 import json
 import os
-import secrets
 import time
 
 import decky
@@ -17,9 +16,10 @@ from .proto import messages as m
 from .settings import write_json_atomic
 from .version import plugin_version
 
-ACTIVE_STATES = ("downloading", "waiting_for_ui", "installing")
+ACTIVE_STATES = ("downloading", "waiting_for_ui", "waiting_for_confirmation", "installing")
 MARKER_FILE = "update.json"
 PENDING_TTL = 24 * 3600   # a verified zip waits this long for the Steam UI (desktop mode has none)
+CONFIRM_WINDOW = 30 * 60  # the user has this long to approve Decky Loader's dialog before the update counts as not confirmed
 REVERT_WINDOW = 5 * 60    # the new version must have confirmed itself by then
 HEALTHY_AFTER = 60        # seconds the new backend runs, listening, before it counts as healthy
 
@@ -28,8 +28,9 @@ class UpdateMixin:
     def _init_update(self) -> None:
         self.update_info = {"state": "idle", "version": "", "reason": None}
         self.update_task = None
-        self.update_pending_zip = None   # {version, sha256, path, nonce, expires} while waiting_for_ui
-        self.update_confirm_task = None
+        self.update_pending_zip = None   # {version, sha256, path, revert_path, revert_sha256, expires}
+        self.update_confirm_task = None  # the new version confirming itself after an install
+        self.update_approval_task = None  # waiting for the user to approve Decky Loader's dialog
 
     # --- paths --------------------------------------------------------------
 
@@ -81,13 +82,14 @@ class UpdateMixin:
             await asyncio.to_thread(update_fetch.verify_sha256, tmp, sha256)
             await asyncio.to_thread(update_check.validate_archive, tmp, version)
             installed = plugin_version(decky.DECKY_PLUGIN_DIR) or "unknown"
-            await asyncio.to_thread(update_fetch.make_revert_copy, decky.DECKY_PLUGIN_DIR, directory, installed)
+            revert_path = await asyncio.to_thread(update_fetch.make_revert_copy, decky.DECKY_PLUGIN_DIR, directory, installed)
+            revert_sha256 = await asyncio.to_thread(update_fetch.sha256_of, revert_path)
             os.replace(tmp, pending)
-            nonce = secrets.token_urlsafe(16)
-            self.update_pending_zip = {"version": version, "sha256": sha256, "path": pending, "nonce": nonce,
-                                       "expires": time.time() + PENDING_TTL}
+            self.update_pending_zip = {"version": version, "sha256": sha256, "path": pending, "revert_path": revert_path,
+                                       "revert_sha256": revert_sha256, "expires": time.time() + PENDING_TTL}
             write_json_atomic(self._marker_path(), {
-                "target": version, "previous": installed, "sha256": sha256, "state": "waiting_for_ui",
+                "target": version, "previous": installed, "sha256": sha256, "revert_path": revert_path,
+                "revert_sha256": revert_sha256, "state": "waiting_for_ui",
                 "expires": time.time() + PENDING_TTL, "deadline": time.time() + PENDING_TTL + REVERT_WINDOW,
                 "confirmed": False})
             self._set_update("waiting_for_ui", version)
@@ -108,7 +110,10 @@ class UpdateMixin:
         self._set_update("failed", version, reason)
 
     def _drop_pending(self) -> None:
-        """Forget a prepared update: the zip, the marker and the one-shot route."""
+        """Forget a prepared update: the zip, the marker and the wait for the user's approval."""
+        task = self.update_approval_task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
         pending, self.update_pending_zip = self.update_pending_zip, None
         if pending:
             self._remove_quietly(pending["path"])
@@ -133,43 +138,45 @@ class UpdateMixin:
             return None
         return pending
 
-    def serve_update_zip(self, nonce: str, host_header: str) -> bytes | None:
-        """The zip bytes for `GET /update/<nonce>/plugin.zip`, once. None -> answer 404/403 (never says which check failed)."""
-        pending = self._pending_update()
-        port = getattr(self, "http_port", 0)
-        if (pending is None or pending.get("served") or host_header not in (f"127.0.0.1:{port}", f"localhost:{port}")
-                or not secrets.compare_digest(nonce, pending["nonce"])):
-            return None
-        try:
-            with open(pending["path"], "rb") as f:
-                data = f.read()
-        except OSError:
-            return None
-        pending["served"] = True
-        return data
-
     async def update_pending(self) -> dict | None:
-        """Frontend callable: what to install now, or None. The URL is only valid for one download."""
+        """Frontend callable: what to ask Decky Loader to install now, or None.
+
+        The URLs are `file://` + the absolute path with no encoding (the Loader fails on a percent-encoded path, and the
+        data folder name has spaces). `revert_*` describe the saved copy of the version that runs now."""
         pending = self._pending_update()
         if pending is None or self.update_info["state"] != "waiting_for_ui":
             return None
-        pending["served"] = False  # a new ask (for example after a failed attempt) may fetch the zip again
-        return {"version": pending["version"], "sha256": pending["sha256"],
-                "url": f"http://127.0.0.1:{self.http_port}/update/{pending['nonce']}/plugin.zip"}
+        return {"version": pending["version"], "sha256": pending["sha256"], "url": "file://" + pending["path"],
+                "previous": (self._read_marker() or {}).get("previous", ""), "revert_url": "file://" + pending["revert_path"],
+                "revert_sha256": pending["revert_sha256"]}
 
     async def update_report(self, result: dict) -> None:
-        """Frontend callable: {"result": "accepted"} once Decky Loader took the install, or {"result": "error", "detail": str}."""
+        """Frontend callable: {"result": "requested"} once the install request is with Decky Loader (its dialog is on the
+        screen and the user has to approve it), or {"result": "error", "detail": str} when the request could not be made."""
         pending = self.update_pending_zip
         if pending is None or self.update_info["state"] != "waiting_for_ui":
             return
-        if isinstance(result, dict) and result.get("result") == "accepted":
+        if isinstance(result, dict) and result.get("result") == "requested":
+            confirm_by = time.time() + CONFIRM_WINDOW
             marker = self._read_marker() or {}
-            marker.update(state="installing", deadline=time.time() + REVERT_WINDOW)
+            marker.update(state="waiting_for_confirmation", confirm_by=confirm_by)
             write_json_atomic(self._marker_path(), marker)
-            self._set_update("installing", pending["version"])
+            self._set_update("waiting_for_confirmation", pending["version"])
+            self._start_approval_timer(pending["version"], CONFIRM_WINDOW)
             return
         detail = str(result.get("detail", "")) if isinstance(result, dict) else ""
         self._fail_update(pending["version"], "installer", detail[:200])
+
+    def _start_approval_timer(self, version: str, seconds: float) -> None:
+        if self.update_approval_task is not None:
+            self.update_approval_task.cancel()
+        self.update_approval_task = self.loop.create_task(self._approval_timeout(version, seconds))
+
+    async def _approval_timeout(self, version: str, seconds: float) -> None:
+        """Cancelled and ignored dialogs look the same from here: after the window the update counts as not confirmed."""
+        await asyncio.sleep(seconds)
+        if self.update_info["state"] == "waiting_for_confirmation" and self.update_info["version"] == version:
+            self._fail_update(version, "not_confirmed", "the install was not approved in time")
 
     # --- start-up: did the last update install? ---------------------------------------------------------------------
 
@@ -197,10 +204,18 @@ class UpdateMixin:
             # The new version is running. It counts as installed once it has kept running, listening, for a while.
             decky.logger.info("update: running %s, confirming after %s s", target, HEALTHY_AFTER)
             self.update_confirm_task = self.loop.create_task(self._confirm_update(target))
-        elif marker.get("state") == "waiting_for_ui" and now < marker.get("expires", 0) and os.path.exists(self._pending_path(target)):
-            # Restarted (reboot, desktop mode) before the Steam UI installed it: offer the same verified zip again.
+        elif (marker.get("state") == "waiting_for_confirmation" and now >= marker.get("confirm_by", 0)):
+            # The dialog has been waiting longer than the window: the user did not approve it.
+            decky.logger.warning("update to %s was not approved in time", target)
+            self._remove_quietly(self._pending_path(target))
+            self._remove_quietly(self._marker_path())
+            self.update_info = {"state": "failed", "version": target, "reason": "not_confirmed"}
+        elif (marker.get("state") in ("waiting_for_ui", "waiting_for_confirmation") and now < marker.get("expires", 0)
+              and os.path.exists(self._pending_path(target))):
+            # Restarted (reboot, desktop mode) before the install happened: offer the same verified zip again.
             self.update_pending_zip = {"version": target, "sha256": marker.get("sha256", ""), "path": self._pending_path(target),
-                                       "nonce": secrets.token_urlsafe(16), "expires": marker["expires"]}
+                                       "revert_path": marker.get("revert_path", ""), "revert_sha256": marker.get("revert_sha256", ""),
+                                       "expires": marker["expires"]}
             self.update_info = {"state": "waiting_for_ui", "version": target, "reason": None}
             self.loop.create_task(decky.emit("update", target))
         else:

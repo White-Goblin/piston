@@ -397,6 +397,26 @@ class UpdateIssueTests(SetupTests):
         coord.on_hello({"type": "hello", "plugin_version": "0.4.1"}, None)
         self.assertIn("plugin_update_failed_dev123abc456", IssueRegistry.deleted)
 
+    async def test_the_approval_notice_exists_while_the_dialog_waits_and_goes_away_afterwards(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_ui", "version": "0.4.1"})
+        issue = self.created()["plugin_update_confirm_dev123abc456"]
+        self.assertEqual((issue["translation_key"], issue["translation_placeholders"]), ("plugin_update_confirm", {"name": "Box"}))
+        self.assertFalse(issue["is_fixable"])
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertEqual(len(IssueRegistry.created), 1)                       # still the same notice
+        coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.1", "reason": "not_confirmed"})
+        self.assertIn("plugin_update_confirm_dev123abc456", IssueRegistry.deleted)
+        failed = self.created()["plugin_update_failed_dev123abc456"]
+        self.assertIn("not approved", failed["translation_placeholders"]["reason"])
+
+    async def test_the_approval_notice_goes_away_when_the_new_version_arrives(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertIn("plugin_update_confirm_dev123abc456", self.created())
+        coord.on_hello({"type": "hello", "plugin_version": "0.4.1"}, None)
+        self.assertIn("plugin_update_confirm_dev123abc456", IssueRegistry.deleted)
+
     async def test_a_failure_for_an_older_target_is_not_shown(self):
         coord = await self.start()
         coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.0", "reason": "hash"})
@@ -421,5 +441,5 @@ class UpdateIssueTests(SetupTests):
 
     async def test_removing_the_entry_removes_the_update_issues(self):
         await integration.async_remove_entry(self.hass, self.entry)
-        for kind in ("plugin_update_failed", "version_skew_updatable"):
+        for kind in ("plugin_update_failed", "version_skew_updatable", "plugin_update_confirm"):
             self.assertIn(f"{kind}_dev123abc456", IssueRegistry.deleted)

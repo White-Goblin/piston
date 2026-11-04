@@ -159,54 +159,44 @@ class UpdateTests(UpdateBase):
         self.assertEqual(self.host.server.pushed, [("failed", VERSION, "hash")])
 
 
-class RouteTests(UpdateBase):
-    """The one-shot zip route and the frontend callables, on top of the same fixtures."""
+class PendingTests(UpdateBase):
+    """What the frontend is told to install (file:// URLs) and how it reports back."""
 
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        from decky_ha.http_server import HttpServerMixin
-
-        class Both(update.UpdateMixin, HttpServerMixin):
-            def __init__(self, loop):
-                self.loop, self.server, self.http_port = loop, FakeServer(), 47821
-                self._init_update()
-
-        self.host = Both(asyncio.get_running_loop())
         self.host._on_update_frame(self.frame())
         await self.host.update_task
 
-    async def get(self, path, host="127.0.0.1:47821"):
-        response = await self.host._handle_request("GET", path, b"", {"host": host})
-        head, _, body = response.partition(b"\r\n\r\n")
-        return head.split(b"\r\n")[0].decode(), body
-
-    async def test_the_zip_is_served_once_with_the_right_bytes(self):
+    async def test_the_frontend_gets_file_urls_and_the_hashes_of_the_files(self):
         pending = await self.host.update_pending()
-        self.assertEqual(pending["version"], VERSION)
-        self.assertEqual(pending["sha256"], self.sha)
-        path = "/" + pending["url"].split("/", 3)[3]
-        status, body = await self.get(path)
-        self.assertEqual((status, body), ("HTTP/1.1 200 OK", self.zip))
-        self.assertEqual((await self.get(path))[0], "HTTP/1.1 404 Not Found")       # single use
+        self.assertEqual((pending["version"], pending["sha256"], pending["previous"]), (VERSION, self.sha, "1.0.0"))
+        self.assertEqual(pending["url"], "file://" + os.path.join(self.runtime, f"pending-{VERSION}.zip"))
+        self.assertEqual(pending["revert_url"], "file://" + os.path.join(self.runtime, "previous-1.0.0.zip"))
+        for url, expected in ((pending["url"], pending["sha256"]), (pending["revert_url"], pending["revert_sha256"])):
+            self.assertTrue(url.startswith("file:///"))
+            self.assertEqual(update_fetch.sha256_of(url[len("file://"):]), expected)
 
-    async def test_a_new_ask_allows_another_download(self):
-        path = "/" + (await self.host.update_pending())["url"].split("/", 3)[3]
-        await self.get(path)
-        await self.host.update_pending()
-        self.assertEqual((await self.get(path))[0], "HTTP/1.1 200 OK")
+    async def test_the_url_is_not_percent_encoded_even_when_the_path_has_spaces(self):
+        self.host._drop_pending()
+        spaced = os.path.join(self.runtime, "Decky Home Assistant")
+        os.makedirs(spaced)
+        with mock.patch.object(update.UpdateMixin, "_update_dir", lambda self: spaced):
+            self.host.update_info = {"state": "idle", "version": "", "reason": None}
+            self.host._on_update_frame(self.frame())
+            await self.host.update_task
+            pending = await self.host.update_pending()
+        self.assertIn("Decky Home Assistant", pending["url"])
+        self.assertNotIn("%", pending["url"])
 
-    async def test_wrong_nonce_wrong_host_and_wrong_names_get_404(self):
+    async def test_the_marker_keeps_the_revert_facts_for_a_dead_backend(self):
+        with open(os.path.join(self.settings, "update.json")) as f:
+            marker = json.load(f)
         pending = await self.host.update_pending()
-        nonce = pending["url"].split("/")[4]
-        for path, host in ((f"/update/{'x' * len(nonce)}/plugin.zip", "127.0.0.1:47821"),
-                           (f"/update/{nonce}/plugin.zip", "evil.example"), (f"/update/{nonce}/plugin.zip", "127.0.0.1:1"),
-                           (f"/update/{nonce}/other.zip", "127.0.0.1:47821"), (f"/update/{nonce}", "127.0.0.1:47821")):
-            self.assertEqual((await self.get(path, host))[0], "HTTP/1.1 404 Not Found", (path, host))
+        self.assertEqual((marker["revert_path"], marker["revert_sha256"]), (pending["revert_url"][len("file://"):], pending["revert_sha256"]))
 
     async def test_nothing_is_offered_unless_an_update_is_waiting(self):
         self.host._drop_pending()
         self.assertIsNone(await self.host.update_pending())
-        self.assertEqual((await self.get("/update/abc/plugin.zip"))[0], "HTTP/1.1 404 Not Found")
 
     async def test_an_expired_update_is_dropped_and_the_status_goes_idle(self):
         self.host.update_pending_zip["expires"] = 0
@@ -215,9 +205,42 @@ class RouteTests(UpdateBase):
         self.assertEqual(sorted(os.listdir(self.runtime)), ["previous-1.0.0.zip"])
         self.assertFalse(os.path.exists(os.path.join(self.settings, "update.json")))
 
-    async def test_report_accepted_moves_to_installing(self):
-        await self.host.update_report({"result": "accepted"})
-        self.assertEqual(self.host.server.pushed[-1], ("installing", VERSION, None))
+    async def test_report_requested_waits_for_the_users_approval(self):
+        await self.host.update_report({"result": "requested"})
+        self.assertEqual(self.host.server.pushed[-1], ("waiting_for_confirmation", VERSION, None))
+        with open(os.path.join(self.settings, "update.json")) as f:
+            marker = json.load(f)
+        self.assertEqual(marker["state"], "waiting_for_confirmation")
+        self.assertGreater(marker["confirm_by"], __import__("time").time() + update.CONFIRM_WINDOW - 5)
+        self.assertIsNone(await self.host.update_pending())          # not offered again while the dialog waits
+        self.host._drop_pending()
+
+    async def test_an_ignored_or_cancelled_dialog_ends_as_not_confirmed(self):
+        with mock.patch.object(update, "CONFIRM_WINDOW", 0.05):
+            await self.host.update_report({"result": "requested"})
+            await self.host.update_approval_task
+        self.assertEqual(self.host.server.pushed[-1], ("failed", VERSION, "not_confirmed"))
+        self.assertEqual(sorted(os.listdir(self.runtime)), ["previous-1.0.0.zip"])
+        self.assertFalse(os.path.exists(os.path.join(self.settings, "update.json")))
+        self.assertIsNone(self.host.update_pending_zip)
+
+    async def test_a_new_version_arriving_stops_the_wait(self):
+        await self.host.update_report({"result": "requested"})
+        task = self.host.update_approval_task
+        self.host._drop_pending()
+        await asyncio.sleep(0)
+        self.assertTrue(task.cancelled())
+
+    async def test_a_second_update_is_busy_while_the_dialog_waits(self):
+        await self.host.update_report({"result": "requested"})
+        with self.assertRaises(m.ProtocolError) as cm:
+            self.host._on_update_frame(self.frame())
+        self.assertEqual(cm.exception.code, m.BUSY)
+        self.host._drop_pending()
+
+    async def test_the_old_accepted_result_is_no_longer_a_thing(self):
+        await self.host.update_report({"result": "accepted"})          # treated like an error
+        self.assertEqual(self.host.server.pushed[-1], ("failed", VERSION, "installer"))
 
     async def test_report_error_fails_as_installer_and_cleans_up(self):
         await self.host.update_report({"result": "error", "detail": "refused"})
@@ -232,13 +255,23 @@ class RouteTests(UpdateBase):
         await self.host.update_report({"result": "error"})
         self.assertEqual(self.host.server.pushed, before)
 
+    async def test_the_http_server_no_longer_serves_updates(self):
+        from decky_ha.http_server import HttpServerMixin
+
+        class Both(HttpServerMixin):
+            nonce = "n"
+
+        response = await Both()._handle_request("GET", "/update/abc/plugin.zip")
+        self.assertTrue(response.startswith(b"HTTP/1.1 404"))
+
 
 class StartupTests(UpdateBase):
     """What the next start does with the marker an update left behind."""
 
     def write_marker(self, **kw):
         marker = {"target": VERSION, "previous": "1.0.0", "sha256": self.sha, "state": "installing",
-                  "expires": 9e12, "deadline": 9e12, "confirmed": False}
+                  "expires": 9e12, "deadline": 9e12, "confirmed": False,
+                  "revert_path": "/data/previous-1.0.0.zip", "revert_sha256": "b" * 64}
         marker.update(kw)
         from decky_ha.settings import write_json_atomic
         write_json_atomic(os.path.join(self.settings, "update.json"), marker)
@@ -291,7 +324,27 @@ class StartupTests(UpdateBase):
         await asyncio.sleep(0)
         self.assertEqual(self.host.update_info["state"], "waiting_for_ui")
         self.assertEqual(self.host.update_pending_zip["version"], VERSION)
+        self.assertEqual((self.host.update_pending_zip["revert_path"], self.host.update_pending_zip["revert_sha256"]),
+                         ("/data/previous-1.0.0.zip", "b" * 64))
         self.assertEqual(decky.emitted, [("update", (VERSION,))])
+
+    async def test_a_restart_with_the_dialog_still_within_its_window_offers_the_zip_again(self):
+        import time
+        self.write_marker(state="waiting_for_confirmation", confirm_by=time.time() + 600)
+        with open(os.path.join(self.runtime, f"pending-{VERSION}.zip"), "wb") as f:
+            f.write(self.zip)
+        self.host._update_startup()
+        self.assertEqual(self.host.update_info["state"], "waiting_for_ui")
+        self.assertEqual((await self.host.update_pending())["version"], VERSION)
+
+    async def test_a_restart_after_the_window_reports_not_confirmed(self):
+        self.write_marker(state="waiting_for_confirmation", confirm_by=1)
+        with open(os.path.join(self.runtime, f"pending-{VERSION}.zip"), "wb") as f:
+            f.write(self.zip)
+        self.host._update_startup()
+        self.assertEqual(self.host._update_status(), {"state": "failed", "version": VERSION, "reason": "not_confirmed"})
+        self.assertFalse(self.marker_exists())
+        self.assertEqual(os.listdir(self.runtime), [])
 
     async def test_an_expired_waiting_marker_is_dropped_as_failed(self):
         self.write_marker(state="waiting_for_ui", expires=1)
@@ -308,12 +361,3 @@ class StartupTests(UpdateBase):
         with open(os.path.join(self.settings, "update.json"), "w") as f:
             f.write("not json")
         self.assertIsNone(await self.host.update_marker())
-
-    async def test_accepted_persists_installing_with_a_fresh_deadline(self):
-        self.host._on_update_frame(self.frame())
-        await self.finish()
-        await self.host.update_report({"result": "accepted"})
-        with open(os.path.join(self.settings, "update.json")) as f:
-            marker = json.load(f)
-        self.assertEqual(marker["state"], "installing")
-        self.assertLess(marker["deadline"] - __import__("time").time(), update.REVERT_WINDOW + 1)

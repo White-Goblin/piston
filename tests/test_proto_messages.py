@@ -122,7 +122,8 @@ class UpdateFrameTests(unittest.TestCase):
 
     def test_roundtrip(self):
         for frame in (m.update("1.2.3", self.URL, self.SHA), m.update_status("downloading", "1.2.3"),
-                      m.update_status("failed", "1.2.3", "hash"), m.update_status("idle")):
+                      m.update_status("failed", "1.2.3", "hash"), m.update_status("idle"),
+                      m.update_status("waiting_for_confirmation", "1.2.3"), m.update_status("failed", "1.2.3", "not_confirmed")):
             self.assertEqual(m.parse(m.encode(frame)), frame)
 
     def test_rejects_each_bad_update_field(self):

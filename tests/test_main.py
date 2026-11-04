@@ -109,3 +109,10 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         state = await self.plugin.reset_pairing()
         self.assertFalse(state["paired"])
         self.assertEqual(self.plugin._load_settings()["secret"], "")
+
+
+class UnloadWhileStartingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_unload_before_main_finished_does_not_fail(self):
+        """Decky can unload a plugin that has only just been constructed (an install right after a start)."""
+        import main
+        await main.Plugin()._unload()

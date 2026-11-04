@@ -52,6 +52,16 @@ class PluginUpdate(DeckyEntity, UpdateEntity):
         return update_logic.release_url(target) if target else None
 
     @property
+    def release_summary(self) -> str | None:
+        """What the user has to do on the device while the update waits (Decky Loader asks before it installs)."""
+        state = self.coordinator.update_state
+        if state == "waiting_for_confirmation":
+            return "Approve the install in the Decky Loader dialog on the device."
+        if state == "waiting_for_ui":
+            return "Switch the device to game mode, then approve the install in the Decky Loader dialog."
+        return None
+
+    @property
     def extra_state_attributes(self) -> dict:
         coordinator = self.coordinator
         attributes = {"update_state": coordinator.update_state}

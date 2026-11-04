@@ -31,15 +31,9 @@ class HttpServerMixin:
     def _json_response(self, status: str, data: dict) -> bytes:
         return self._http_response(status, "application/json", json.dumps(data).encode())
 
-    async def _handle_request(self, method: str, target: str, body: bytes = b"", headers: dict | None = None) -> bytes:
+    async def _handle_request(self, method: str, target: str, body: bytes = b"") -> bytes:
         url = urlsplit(target)
         text = "text/plain; charset=utf-8"
-        parts = url.path.split("/")
-        if method == "GET" and len(parts) == 4 and parts[1] == "update" and parts[3] == "plugin.zip":
-            data = self.serve_update_zip(parts[2], (headers or {}).get("host", ""))
-            if data is None:
-                return self._http_response("404 Not Found", text, b"not found")
-            return self._http_response("200 OK", "application/zip", data)
         if method == "GET" and url.path in STATIC_FILES:
             path = os.path.join(decky.DECKY_PLUGIN_DIR, "dist", url.path.lstrip("/"))
             try:
@@ -93,7 +87,7 @@ class HttpServerMixin:
                     response = self._http_response("413 Payload Too Large", "text/plain", b"")
                 else:
                     body = await asyncio.wait_for(reader.readexactly(length), 5) if length else b""
-                    response = await self._handle_request(parts[0], parts[1], body, headers)
+                    response = await self._handle_request(parts[0], parts[1], body)
             writer.write(response)
             await writer.drain()
         except Exception as e:

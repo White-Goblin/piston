@@ -165,18 +165,25 @@ class Plugin(
 
     async def _unload(self):
         decky.logger.info("Decky Home Assistant unloading")
-        for task in (self.sensor_task, self.audio_task, self.device_task, self.session_task, self.resume_task, self.playback_task):
-            task.cancel()
-        await self._stop_lifecycle()
-        for task in (self.update_task, self.update_confirm_task):
+        # Decky may unload a plugin that is still starting (an install right after a start): only stop what exists
+        for name in ("sensor_task", "audio_task", "device_task", "session_task", "resume_task", "playback_task",
+                     "update_task", "update_confirm_task", "update_approval_task"):
+            task = getattr(self, name, None)
             if task is not None:
                 task.cancel()
-        if self.advertiser is not None:
-            await self.advertiser.stop()
-        await self.server.stop()
-        self._close_keyboard()
-        if self.http_server is not None:
-            self.http_server.close()
+        if getattr(self, "lifecycle", None) is not None:
+            await self._stop_lifecycle()
+        advertiser = getattr(self, "advertiser", None)
+        if advertiser is not None:
+            await advertiser.stop()
+        server = getattr(self, "server", None)
+        if server is not None:
+            await server.stop()
+        if getattr(self, "keyboard", None) is not None:
+            self._close_keyboard()
+        http_server = getattr(self, "http_server", None)
+        if http_server is not None:
+            http_server.close()
 
     async def _uninstall(self):
         decky.logger.info("Decky Home Assistant uninstalled")

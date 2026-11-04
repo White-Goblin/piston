@@ -28,8 +28,8 @@ ERROR_CODES = (BAD_REQUEST, UNAUTHORIZED, BUSY, OFFLINE, NOT_RUNNING, UNSUPPORTE
 FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status")
 
 # Update lane frames (see docs/protocol.md): HA tells the device which release to install, the device reports progress.
-UPDATE_STATES = ("idle", "downloading", "waiting_for_ui", "installing", "failed")
-UPDATE_REASONS = ("bad_request", "busy", "download", "hash", "archive", "installer", "version")
+UPDATE_STATES = ("idle", "downloading", "waiting_for_ui", "waiting_for_confirmation", "installing", "failed")
+UPDATE_REASONS = ("bad_request", "busy", "download", "hash", "archive", "installer", "not_confirmed", "version")
 MAX_UPDATE_URL_LEN = 512
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 

@@ -182,7 +182,10 @@ class DeckyCoordinator:
     def on_update_status(self, frame: dict) -> None:
         state = frame["state"]
         self.update_status = {"state": state, "version": frame.get("version", ""), "reason": frame.get("reason")}
-        if state == "installing":
+        if state in ("downloading", "waiting_for_ui", "waiting_for_confirmation", "installing") and self.update_latch \
+                and self.update_latch.get("reason") == "version":
+            self.update_latch = None  # the device is working on it again (for example a dropped connection while the dialog waited)
+        if state in ("waiting_for_confirmation", "installing"):
             self._expect_install = True
         elif state == "failed":
             self._expect_install = False
@@ -191,11 +194,19 @@ class DeckyCoordinator:
 
     @property
     def update_in_progress(self) -> bool:
-        return self.update_status is not None and self.update_status["state"] in ("downloading", "waiting_for_ui", "installing")
+        return self.update_status is not None and self.update_status["state"] in (
+            "downloading", "waiting_for_ui", "waiting_for_confirmation", "installing")
+
+    @property
+    def update_needs_approval(self) -> bool:
+        """The update is ready and waiting for the user: for the dialog of Decky Loader on the device (or for game mode)."""
+        return self.update_status is not None and self.update_status["state"] in ("waiting_for_ui", "waiting_for_confirmation")
 
     @property
     def update_state(self) -> str:
-        """For the update entity: in_progress, failed, cannot_determine, up_to_date, available, predates_lane, no_lane or unknown."""
+        """For the update entity: waiting_for_ui, waiting_for_confirmation, in_progress, failed, cannot_determine, up_to_date, available, predates_lane, no_lane or unknown."""
+        if self.update_needs_approval:
+            return self.update_status["state"]
         if self.update_in_progress:
             return "in_progress"
         if self.update_latch and self.update_latch["version"] == self.target_version:

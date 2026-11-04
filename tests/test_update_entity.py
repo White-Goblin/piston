@@ -138,3 +138,46 @@ class UpdateEntityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HomeAssistantError):
             await self.entity.async_install(None, False)
         self.assertEqual(self.coord.client.sent, [])
+
+
+    # --- while Decky Loader's dialog waits for the user, the entity says what to do ---
+
+    async def test_the_entity_asks_for_the_approval_or_for_game_mode(self):
+        self.coord.on_connection(True)
+        self.hello("0.4.0")
+        await self.settle()
+        self.assertIsNone(self.entity.release_summary)
+        self.coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertTrue(self.entity.in_progress)
+        self.assertEqual(self.entity.extra_state_attributes["update_state"], "waiting_for_confirmation")
+        self.assertIn("Decky Loader dialog", self.entity.release_summary)
+        self.assertLessEqual(len(self.entity.release_summary), 255)
+        self.coord.on_update_status({"type": "update_status", "state": "waiting_for_ui", "version": "0.4.1"})
+        self.assertEqual(self.entity.extra_state_attributes["update_state"], "waiting_for_ui")
+        self.assertIn("game mode", self.entity.release_summary)
+        self.coord.on_update_status({"type": "update_status", "state": "downloading", "version": "0.4.1"})
+        self.assertIsNone(self.entity.release_summary)
+        self.assertEqual(self.entity.extra_state_attributes["update_state"], "in_progress")
+
+    async def test_a_dialog_that_was_not_approved_is_a_failure_with_its_reason(self):
+        self.coord.on_connection(True)
+        self.hello("0.4.0")
+        await self.settle()
+        self.coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.1", "reason": "not_confirmed"})
+        self.assertEqual(self.entity.extra_state_attributes["update_state"], "failed")
+        self.assertIsNone(self.entity.release_summary)
+        self.hello("0.4.0")                                  # no automatic retry
+        await self.settle()
+        self.assertEqual(self.coord.client.sent, [("0.4.1", ul.asset_url("0.4.1"), SHA)])
+        await self.entity.async_install(None, False)         # an Install press asks again
+        self.assertEqual(len(self.coord.client.sent), 2)
+
+    async def test_a_dropped_connection_while_the_dialog_waits_is_not_a_version_failure(self):
+        self.coord.on_connection(True)
+        self.hello("0.4.0")
+        await self.settle()
+        self.coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.hello("0.4.0")                                  # reconnected, still the old version: looks like a failed install
+        self.assertEqual(self.coord.update_latch, {"version": "0.4.1", "reason": "version"})
+        self.coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertIsNone(self.coord.update_latch)           # the device says it is still waiting

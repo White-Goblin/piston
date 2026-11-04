@@ -26,6 +26,7 @@ REASON_TEXT = {
     "hash": "the download did not match its checksum",
     "archive": "the downloaded file was not a valid plugin",
     "installer": "Decky Loader could not install it",
+    "not_confirmed": "the install was not approved on the device",
     "version": "the plugin came back on a different version after the install",
 }
 

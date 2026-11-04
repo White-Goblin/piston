@@ -87,7 +87,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for kind, wanted, placeholders in (
                 ("plugin_update_failed", failed, {"name": name, "version": (latch or {}).get("version", ""),
                                                   "reason": REASON_TEXT.get((latch or {}).get("reason", ""), "of an unknown reason")}),
-                ("version_skew_updatable", skewed_manual, {"name": name})):
+                ("version_skew_updatable", skewed_manual, {"name": name}),
+                ("plugin_update_confirm", coordinator.update_needs_approval, {"name": name})):
             if wanted and shown_issues.get(kind) != repr(placeholders):
                 shown_issues[kind] = repr(placeholders)
                 ir.async_create_issue(hass, DOMAIN, _issue_id(entry, kind), is_fixable=False, severity=ir.IssueSeverity.WARNING,
@@ -161,5 +162,5 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
                           data[CONF_DEVICE_ID], bytes.fromhex(data[CONF_SECRET]))
     except Exception as e:  # noqa: BLE001 - offline or already reset: use Reset pairing on the device
         _LOGGER.warning("Could not tell the device to unpair (%s). Use Reset pairing in its plugin panel.", e)
-    for kind in ("version_skew_old", "version_skew_new", "plugin_update_failed", "version_skew_updatable"):
+    for kind in ("version_skew_old", "version_skew_new", "plugin_update_failed", "version_skew_updatable", "plugin_update_confirm"):
         ir.async_delete_issue(hass, DOMAIN, _issue_id(entry, kind))
