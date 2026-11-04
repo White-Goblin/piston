@@ -1,8 +1,8 @@
 # Piston
 
-**Media and control for SteamOS devices in your living room.** Piston pushes commands from Home Assistant to the box under the TV: launch an app, press play, wake it, put it to sleep, show a camera on screen.
+**Media and control for SteamOS devices in your living room.** Piston pushes commands from Home Assistant to the box under the TV: launch an app, press play, wake it, put it to sleep, show a camera on screen. The device can also be a background speaker for Music Assistant, with a now-playing card on its own screen.
 
-Control a SteamOS device from [Home Assistant](https://www.home-assistant.io/). A custom integration (installed through the Home Assistant Marketplace or [HACS](https://hacs.xyz/)) gives you a media player, sensors, notifications and camera picture-in-picture for a Steam Deck, Steam Machine or any other [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) device. A small companion plugin on the device does the work there.
+Control a SteamOS device from [Home Assistant](https://www.home-assistant.io/). An integration gives you a media player, sensors, notifications and camera picture-in-picture for a Steam Deck, Steam Machine or any other [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) device. A small companion plugin on the device does the work there.
 
 The device is found automatically and paired with a short code shown on its screen.
 
@@ -22,6 +22,7 @@ Requires Home Assistant 2026.10 or newer (the version it was developed and teste
 | Controller battery and charging | One pair per controller the device has seen; unavailable while the controller is off |
 | Toast (notify) and Toast click (event) | Show a Steam notification; fires when someone clicks it |
 | Sendspin player (switch) and Sendspin status (sensor) | Turn the device's Sendspin player on or off (on by default). It lets Music Assistant, and Home Assistant text to speech through Music Assistant, play audio on the device in the background, mixed with games and apps. The status shows `disabled`, `waiting`, `connected`, `streaming` or `error`. Only devices whose plugin has the player get these two |
+| Music Assistant player (created by Music Assistant, not by Piston) | The device's Sendspin player shows up in Music Assistant and Home Assistant as its own media player for background music and announcements; see [Sendspin player](#sendspin-player). On the device itself, a Piston tab in the Quick Access menu shows what is playing with play, pause, next, previous and a volume slider |
 | PiP camera (select) and PiP state (sensor) | Show a camera over whatever is on screen (including a running game); choose Off to hide it |
 
 Actions (Developer tools, automations and scripts):
@@ -32,7 +33,7 @@ Actions (Developer tools, automations and scripts):
 
 ## Install
 
-1. **Integration.** On Home Assistant 2026.11 or newer open Settings > Marketplace; on older versions open HACS. Add `https://github.com/White-Goblin/piston` as a custom repository of category Integration (the menu in the top right), then download Piston and restart Home Assistant. Once Piston is in the default catalog you can simply search for it.
+1. **Integration.** Download it with the **Download** button on this page (top right), then restart Home Assistant.
 2. **Plugin on the device.** Download `piston-<version>.zip` from the [releases](https://github.com/White-Goblin/piston/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
 3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Piston; the panel shows a 6-digit code. Enter it in Home Assistant. Done: the entities appear.
 4. **Choose your apps.** In the plugin panel, under Apps in Home Assistant, add the Steam games and non-Steam apps you want as media player sources.
@@ -109,14 +110,14 @@ From version 0.7.0 the device shows what the Sendspin player is playing and has 
 
 ## Plugin updates
 
-From version 0.4.0 the plugin on the device follows the integration: when you update the integration in HACS and restart Home Assistant, the device is brought to the same version.
+From version 0.4.0 the plugin on the device follows the integration: when you update the integration and restart Home Assistant, the device is brought to the same version.
 
 - The **Plugin update** entity (on the device page) shows the plugin version on the device and the version of the integration, with an Install button. **Install plugin updates automatically** (a switch, on by default) lets Home Assistant start the update as soon as the device connects; turn it off to start updates yourself with Install.
 - **You approve the install on the device.** Decky Loader always asks first: a dialog ("Install Piston") appears in the Steam interface and you tap OK. While it waits, the update entity says so (in its release summary) and a Repairs item, "Approve the plugin update on ...", reminds you. The device also shows a toast ("Plugin update ready"); tapping it shows the dialog again, which helps if the dialog disappeared (for example after Steam restarted). If the device is in desktop mode, switch it to game mode: the dialog appears there. If you cancel or ignore it, after 30 minutes the update is marked as not approved (a Repairs item says so); press Install to ask again.
 - The device downloads the release from GitHub itself and checks it against the checksum in the release's `SHA256SUMS` file before it gives it to Decky Loader. A compromised GitHub release would not be noticed by this check. If something goes wrong the old plugin keeps running; a failed update is shown in Repairs and is not retried until you press Install or a newer version is out.
 - If a new plugin installs but does not start, the device asks Decky Loader to put the previous version back (you approve that dialog too). If the plugin is ever too broken to do even that, install the zip from the releases page by hand as in step 2.
 - Plugins older than 0.4.0 cannot be updated this way and still show the version-mismatch Repairs item: install the zip once by hand.
-- Downgrades follow the integration too: if you roll the integration back in HACS to 0.4.0 or newer, the plugin is brought back to that version. Versions before 0.4.0 are never targeted.
+- Downgrades follow the integration too: if you roll the integration back to 0.4.0 or newer, the plugin is brought back to that version. Versions before 0.4.0 are never targeted.
 
 ## Wake on LAN
 
@@ -161,7 +162,7 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 
 ## Uninstall
 
-Remove the device in Home Assistant (this also resets the plugin's pairing), then remove the integration in HACS and the plugin in Decky Loader.
+Remove the device in Home Assistant (this also resets the plugin's pairing), then remove the integration (from the same place you downloaded it) and the plugin in Decky Loader.
 
 ## More
 
