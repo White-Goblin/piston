@@ -215,6 +215,33 @@ class PendingTests(UpdateBase):
         self.assertIsNone(await self.host.update_pending())          # not offered again while the dialog waits
         self.host._drop_pending()
 
+    async def test_a_fresh_interface_can_ask_for_the_update_again_while_the_dialog_is_believed_open(self):
+        await self.host.update_report({"result": "requested"})
+        self.assertIsNone(await self.host.update_pending())                      # the normal check does not repeat a request
+        again = await self.host.update_pending(True)                              # a freshly loaded interface does
+        self.assertEqual((again["version"], again["sha256"]), (VERSION, self.sha))
+        self.host.server.pushed.clear()
+        await self.host.update_report({"result": "requested"})                    # the new request: same state, no new status frame
+        self.assertEqual(self.host.update_info["state"], "waiting_for_confirmation")
+        self.assertEqual(self.host.server.pushed, [])
+        self.host._drop_pending()
+
+    async def test_a_new_request_gives_the_user_a_full_window_again(self):
+        with mock.patch.object(update, "CONFIRM_WINDOW", 0.3):
+            await self.host.update_report({"result": "requested"})
+            first = self.host.update_approval_task
+            await asyncio.sleep(0.2)
+            await self.host.update_report({"result": "requested"})
+            self.assertTrue(first.cancelled() or first.cancelling())
+            await asyncio.sleep(0.2)                                              # 0.4 s after the first request, 0.2 after the second
+            self.assertEqual(self.host.update_info["state"], "waiting_for_confirmation")
+            await self.host.update_approval_task
+        self.assertEqual(self.host.server.pushed[-1], ("failed", VERSION, "not_confirmed"))
+
+    async def test_requested_is_not_offered_when_nothing_is_pending(self):
+        self.host._drop_pending()
+        self.assertIsNone(await self.host.update_pending(True))
+
     async def test_an_ignored_or_cancelled_dialog_ends_as_not_confirmed(self):
         with mock.patch.object(update, "CONFIRM_WINDOW", 0.05):
             await self.host.update_report({"result": "requested"})

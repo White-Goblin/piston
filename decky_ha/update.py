@@ -138,13 +138,18 @@ class UpdateMixin:
             return None
         return pending
 
-    async def update_pending(self) -> dict | None:
+    async def update_pending(self, requested: bool = False) -> dict | None:
         """Frontend callable: what to ask Decky Loader to install now, or None.
+
+        Normally only while the update waits for the Steam interface. With `requested=True` it is also given while the
+        dialog is believed to be open: a Steam interface that has just loaded knows that any dialog from before is gone
+        (the interface restarted), and the toast's click asks for the dialog again.
 
         The URLs are `file://` + the absolute path with no encoding (the Loader fails on a percent-encoded path, and the
         data folder name has spaces). `revert_*` describe the saved copy of the version that runs now."""
         pending = self._pending_update()
-        if pending is None or self.update_info["state"] != "waiting_for_ui":
+        wanted = ("waiting_for_ui", "waiting_for_confirmation") if requested else ("waiting_for_ui",)
+        if pending is None or self.update_info["state"] not in wanted:
             return None
         return {"version": pending["version"], "sha256": pending["sha256"], "url": "file://" + pending["path"],
                 "previous": (self._read_marker() or {}).get("previous", ""), "revert_url": "file://" + pending["revert_path"],
@@ -154,15 +159,16 @@ class UpdateMixin:
         """Frontend callable: {"result": "requested"} once the install request is with Decky Loader (its dialog is on the
         screen and the user has to approve it), or {"result": "error", "detail": str} when the request could not be made."""
         pending = self.update_pending_zip
-        if pending is None or self.update_info["state"] != "waiting_for_ui":
+        if pending is None or self.update_info["state"] not in ("waiting_for_ui", "waiting_for_confirmation"):
             return
-        if isinstance(result, dict) and result.get("result") == "requested":
+        if isinstance(result, dict) and result.get("result") == "requested":  # also a new request for a dialog that was lost
             confirm_by = time.time() + CONFIRM_WINDOW
             marker = self._read_marker() or {}
             marker.update(state="waiting_for_confirmation", confirm_by=confirm_by)
             write_json_atomic(self._marker_path(), marker)
-            self._set_update("waiting_for_confirmation", pending["version"])
-            self._start_approval_timer(pending["version"], CONFIRM_WINDOW)
+            if self.update_info["state"] != "waiting_for_confirmation":
+                self._set_update("waiting_for_confirmation", pending["version"])
+            self._start_approval_timer(pending["version"], CONFIRM_WINDOW)  # a new request gives the user a full window again
             return
         detail = str(result.get("detail", "")) if isinstance(result, dict) else ""
         self._fail_update(pending["version"], "installer", detail[:200])
