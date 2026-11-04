@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+import unittest.mock
 import urllib.error
 import zipfile
 
@@ -85,6 +86,40 @@ class DownloadTests(unittest.TestCase):
         with self.assertRaises(urllib.error.URLError):
             handler.redirect_request(req, None, 302, "Found", {}, "https://evil.example/x.zip")
         self.assertIsNotNone(handler.redirect_request(req, None, 302, "Found", {}, "https://objects.githubusercontent.com/x.zip"))
+
+
+class SslContextTests(unittest.TestCase):
+    def test_the_first_readable_bundle_is_loaded_and_the_rest_are_not_tried(self):
+        loaded = []
+
+        def load(self, cafile=None, **kw):
+            loaded.append(cafile)
+            if cafile == "/bad":
+                raise OSError("unreadable")
+
+        with unittest.mock.patch.object(uf.ssl.SSLContext, "load_verify_locations", load):
+            context = uf.make_ssl_context(("/bad", "/good", "/never"))
+        self.assertEqual(loaded, ["/bad", "/good"])
+        self.assertTrue(context.verify_mode == uf.ssl.CERT_REQUIRED and context.check_hostname)
+
+    def test_no_readable_bundle_still_gives_a_verifying_context(self):
+        context = uf.make_ssl_context(("/nonexistent/a", "/nonexistent/b"))
+        self.assertEqual(context.verify_mode, uf.ssl.CERT_REQUIRED)
+
+    def test_the_default_opener_uses_that_context(self):
+        built = []
+        real = uf.urllib.request.HTTPSHandler
+
+        class Spy(real):
+            def __init__(self, context=None, **kw):
+                built.append(context)
+                super().__init__(context=context, **kw)
+
+        with unittest.mock.patch.object(uf.urllib.request, "HTTPSHandler", Spy), \
+                unittest.mock.patch.object(uf.urllib.request.OpenerDirector, "open", lambda self, *a, **k: "opened"):
+            self.assertEqual(uf.default_opener(URL, 5), "opened")
+        self.assertEqual(len(built), 1)
+        self.assertIsInstance(built[0], uf.ssl.SSLContext)
 
 
 class RevertCopyTests(unittest.TestCase):

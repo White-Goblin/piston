@@ -85,7 +85,9 @@ export const registerUpdateInstaller = () => {
     busy = true;
     try {
       const pending = await updatePending();
-      if (!pending || outstanding?.version === pending.version) return;
+      // The backend only offers an update while it waits for the Steam interface, so an earlier request for the same
+      // version (a failed or abandoned one) no longer counts: ask again.
+      if (!pending) return;
       log("asking Decky Loader to install", pending.version);
       try {
         await requestInstall(pending.url, pending.version, pending.sha256);
@@ -119,7 +121,7 @@ export const registerUpdateInstaller = () => {
     if (now - wait.requestedAt > GIVE_UP_MS) return finish("gave up waiting");
     let marker: Marker | null | undefined;
     try {
-      marker = await updateMarker();
+      marker = (await updateMarker()) ?? null; // no marker comes back as null or undefined, both mean "none pending"
     } catch {
       marker = undefined; // the backend does not answer
     }
