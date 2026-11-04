@@ -21,6 +21,7 @@ from piston_device.pairing import PairingMixin
 from piston_device.pip import PipMixin
 from piston_device.pip_signal import PipSignalMixin
 from piston_device.resume import ResumeMixin
+from piston_device.sendspin.mixin import SendspinMixin
 from piston_device.sensors import SensorsMixin
 from piston_device.proto import LANE_VERSION, messages as proto_messages
 from piston_device.server import DEFAULT_PORT, ProtocolServer
@@ -42,6 +43,7 @@ class Plugin(
     MediaKeyMixin,
     ControllersMixin,
     SensorsMixin,
+    SendspinMixin,
     PipMixin,
     PipSignalMixin,
     WolMixin,
@@ -62,6 +64,7 @@ class Plugin(
             "pip_hide": self._cmd_pip_hide,
             "pip_signal": self._cmd_pip_signal,
             "set_sensor_interval": self._cmd_set_sensor_interval,
+            "sendspin_enable": self._cmd_sendspin_enable,
             "unpair": self._cmd_unpair,
         }
 
@@ -123,6 +126,7 @@ class Plugin(
         self.advertiser = None
         self._init_state()
         self._init_media()
+        self._init_sendspin()
         self._init_pairing()
         self._init_pip_signal()
         self._init_update()
@@ -161,6 +165,7 @@ class Plugin(
         if self.server.port:
             self.advertiser = Advertiser(self._advert_info, self.server.port)
             await self.advertiser.start()
+        await self._sendspin_boot()
         await self._start_lifecycle()
 
     async def _unload(self):
@@ -173,6 +178,8 @@ class Plugin(
                 task.cancel()
         if getattr(self, "lifecycle", None) is not None:
             await self._stop_lifecycle()
+        if getattr(self, "sendspin_listener", None) is not None or getattr(self, "sendspin_advertiser", None) is not None:
+            await self._sendspin_stop(push=False)
         advertiser = getattr(self, "advertiser", None)
         if advertiser is not None:
             await advertiser.stop()

@@ -59,4 +59,5 @@ def plugin_environment_patches():
     fixed session (the real detector looks at this machine's processes, and a desktop here would refuse game-mode commands)."""
     from unittest import mock
     return [mock.patch("piston_device.state.Lifecycle", StubLifecycle),
-            mock.patch("piston_device.state.detect_session", lambda comms=None: "game")]
+            mock.patch("piston_device.state.detect_session", lambda comms=None: "game"),
+            mock.patch("piston_device.sendspin.mixin.LISTEN_PORT", 0)]  # the Sendspin player listens on a free port, never 8928

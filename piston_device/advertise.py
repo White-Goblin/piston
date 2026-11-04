@@ -10,6 +10,7 @@ from .proto import PROTOCOL_VERSION
 log = logging.getLogger("decky-ha.advertise")
 
 SERVICE_TYPE = "_piston._tcp.local."
+SENDSPIN_SERVICE_TYPE = "_sendspin._tcp.local."
 CHECK_SECONDS = 15
 
 
@@ -25,12 +26,22 @@ def outbound_ip() -> str | None:
 
 
 class Advertiser:
-    """`info()` returns {device_id, name, paired}; `port` is the protocol server port.
-    `factory` builds the low-level advertiser (replaced in tests)."""
+    """`info()` returns {device_id, name, paired}; `port` is the protocol server port (it may be changed while running:
+    the next sync re-announces on the new port). `factory` builds the low-level advertiser (replaced in tests).
+
+    The service type, the TXT record, the instance name and the host name can be replaced to advertise another service
+    (see `sendspin_advertiser`); the defaults are Piston's own."""
 
     def __init__(self, info: Callable[[], dict], port: int, ip_func: Callable[[], str | None] | None = None,
-                 factory=MdnsAdvertiser, check_seconds: float = CHECK_SECONDS):
+                 factory=MdnsAdvertiser, check_seconds: float = CHECK_SECONDS, *, service_type: str = SERVICE_TYPE,
+                 txt_builder: Callable[[dict], dict] | None = None, instance_builder: Callable[[dict], str] | None = None,
+                 host_builder: Callable[[dict], str] | None = None):
         self._info, self.port, self._factory, self._check = info, port, factory, check_seconds
+        self._service_type = service_type
+        self._txt_builder = txt_builder or self._piston_txt
+        self._instance = instance_builder or (lambda i: i["device_id"])
+        self._host = host_builder or (lambda i: f"{i['device_id']}.local.")
+        self._port_now: int | None = None
         self._ip = ip_func or (lambda: outbound_ip())
         self._adv = None
         self._ip_now: str | None = None
@@ -42,32 +53,33 @@ class Advertiser:
         """True while an advertisement is up on the current address."""
         return self._adv is not None
 
-    def _txt_now(self) -> dict:
-        i = self._info()
+    @staticmethod
+    def _piston_txt(i: dict) -> dict:
         return {"device_id": i["device_id"], "name": i["name"], "proto": PROTOCOL_VERSION, "paired": int(bool(i["paired"]))}
 
     async def sync(self) -> None:
         """Bring the advertisement in line with the current address and TXT values."""
-        ip, txt = self._ip(), self._txt_now()
-        if ip != self._ip_now:
+        info = self._info()
+        ip, txt = self._ip(), self._txt_builder(info)
+        if ip != self._ip_now or (self._adv is not None and self.port != self._port_now):
             await self._stop()
             if ip is None:
                 self._ip_now = None
                 return
-            adv = self._factory(SERVICE_TYPE, txt["device_id"], f"{txt['device_id']}.local.", self.port, ip, txt)
+            adv = self._factory(self._service_type, self._instance(info), self._host(info), self.port, ip, txt)
             try:
                 await adv.start()
             except OSError as e:
                 log.warning("mDNS start failed on %s: %s", ip, e)
                 return
-            self._adv, self._ip_now, self._txt = adv, ip, txt
-            log.info("advertising %s on %s:%s", txt["device_id"], ip, self.port)
+            self._adv, self._ip_now, self._txt, self._port_now = adv, ip, txt, self.port
+            log.info("advertising %s on %s:%s", self._instance(info), ip, self.port)
         elif self._adv is not None and txt != self._txt:
             await self._adv.refresh(**txt)
             self._txt = txt
 
     async def _stop(self) -> None:
-        adv, self._adv, self._ip_now = self._adv, None, None
+        adv, self._adv, self._ip_now, self._port_now = self._adv, None, None, None
         if adv is not None:
             try:
                 await adv.stop()
@@ -94,3 +106,12 @@ class Advertiser:
         if self._task:
             self._task.cancel()
         await self._stop()
+
+
+def sendspin_advertiser(info: Callable[[], dict], port: int, ip_func=None, factory=MdnsAdvertiser, check_seconds: float = CHECK_SECONDS) -> Advertiser:
+    """Advertises the Sendspin player (`_sendspin._tcp`, server-initiated mode): instance = the client id, as the
+    reference client does; TXT `path` (required by the spec) and `name`. `info()` returns {device_id, client_id, name}
+    (`device_id` only names the host record, shared with Piston's). Changing `.port` re-announces on the new port."""
+    return Advertiser(info, port, ip_func, factory, check_seconds, service_type=SENDSPIN_SERVICE_TYPE,
+                      txt_builder=lambda i: {"path": "/sendspin", "name": i["name"]},
+                      instance_builder=lambda i: i["client_id"])
