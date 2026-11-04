@@ -199,6 +199,103 @@ class ServerMessageTests(unittest.TestCase):
         self.bad("group/update", {"playback_state": "paused"})
 
 
+# The codec_header Music Assistant really sent for a 24-bit, 44.1 kHz track (captured 2026-11-04)
+REAL_FLAC_HEADER = "ZkxhQ4AAACISABIAAAAAAG5aCsRDcAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+
+def flac_header(rate=44100, channels=2, depth=24, last=True, length=34, marker=b"fLaC"):
+    """A fLaC marker + STREAMINFO block with the given values, Base64 encoded."""
+    info = (rate << 44) | ((channels - 1) << 41) | ((depth - 1) << 36)
+    block = bytes([(0x80 if last else 0) | 0]) + length.to_bytes(3, "big") + bytes(10) + info.to_bytes(8, "big") + bytes(16)
+    return __import__("base64").b64encode(marker + block[:4] + block[4:][:34].ljust(34, b"\0")).decode()
+
+
+class FlacHeaderTests(unittest.TestCase):
+    def test_the_header_music_assistant_really_sent_parses(self):
+        info = sm.parse_flac_header(REAL_FLAC_HEADER)
+        self.assertEqual((info["sample_rate"], info["channels"], info["bit_depth"]), (44100, 2, 24))
+        self.assertEqual(len(info["bytes"]), 42)
+        self.assertEqual(info["bytes"][:5], b"fLaC\x80")
+
+    def test_generated_headers_round_trip_the_values(self):
+        for rate, depth in ((48000, 24), (44100, 16), (48000, 16), (44100, 24)):
+            info = sm.parse_flac_header(flac_header(rate=rate, depth=depth))
+            self.assertEqual((info["sample_rate"], info["bit_depth"]), (rate, depth))
+
+    def test_the_last_block_flag_is_set_when_the_server_left_it_out(self):
+        info = sm.parse_flac_header(flac_header(last=False))
+        self.assertEqual(info["bytes"][4] & 0x80, 0x80)
+
+    def test_bad_headers_are_rejected(self):
+        bad = [None, 5, "", "not base64!!", REAL_FLAC_HEADER[:-4], flac_header(marker=b"fLaX"),
+               flac_header(length=35), "A" * 9000, __import__("base64").b64encode(b"fLaC" + bytes(100)).decode(),
+               __import__("base64").b64encode(b"fLaC\x01" + bytes([0, 0, 34]) + bytes(34)).decode()]   # a non-STREAMINFO block type
+        for header in bad:
+            with self.assertRaises(sm.SendspinProtocolError, msg=repr(header)[:40]):
+                sm.parse_flac_header(header)
+
+
+class FormatTableTests(unittest.TestCase):
+    def names(self, formats):
+        return [(f["codec"], f["sample_rate"], f["bit_depth"]) for f in formats]
+
+    def test_pcm_only_by_default(self):
+        self.assertEqual(self.names(sm.offered_formats()), [("pcm", 48000, 16), ("pcm", 44100, 16)])
+
+    def test_the_full_table_in_the_preferred_order(self):
+        self.assertEqual(self.names(sm.offered_formats({"flac", "opus"})), [
+            ("flac", 48000, 24), ("flac", 44100, 24), ("flac", 48000, 16), ("flac", 44100, 16),
+            ("pcm", 48000, 16), ("pcm", 44100, 16), ("opus", 48000, 16)])
+
+    def test_a_codec_that_did_not_load_is_left_out_and_pcm_stays(self):
+        self.assertEqual([f["codec"] for f in sm.offered_formats({"opus"})], ["pcm", "pcm", "opus"])
+        self.assertEqual([f["codec"] for f in sm.offered_formats({"flac"})], ["flac"] * 4 + ["pcm", "pcm"])
+        self.assertEqual({f["channels"] for f in sm.offered_formats({"flac", "opus"})}, {2})
+
+    def test_the_hello_lists_exactly_the_offered_formats(self):
+        import json
+        hello = json.loads(sm.build_client_hello("Box", 1_000_000, available={"flac", "opus"})[1:])
+        self.assertEqual(hello["payload"]["player@v1_support"]["supported_formats"], sm.offered_formats({"flac", "opus"}))
+
+    def validate(self, **change):
+        fmt = {"codec": "flac", "sample_rate": 44100, "channels": 2, "bit_depth": 24, "codec_header": REAL_FLAC_HEADER}
+        return sm.validate_stream_format({**fmt, **change})
+
+    def test_valid_streams_for_each_codec(self):
+        flac = self.validate()
+        self.assertEqual((flac["codec"], flac["sample_rate"], flac["bit_depth"]), ("flac", 44100, 24))
+        self.assertEqual(flac["header"][:5], b"fLaC\x80")
+        self.assertEqual(self.validate(codec_header=flac_header(48000, 2, 16), sample_rate=48000, bit_depth=16)["bit_depth"], 16)
+        self.assertNotIn("header", sm.validate_stream_format({"codec": "pcm", "sample_rate": 48000, "channels": 2, "bit_depth": 16}))
+        self.assertEqual(sm.validate_stream_format({"codec": "opus", "sample_rate": 48000, "channels": 2, "bit_depth": 16})["codec"], "opus")
+        self.assertEqual(sm.validate_stream_format({"codec": "opus", "sample_rate": 48000, "channels": 2})["codec"], "opus")  # depth ignored
+
+    def test_flac_streams_that_disagree_with_their_header_or_the_table_are_rejected(self):
+        for change in ({"codec_header": None}, {"codec_header": "AAAA"}, {"sample_rate": 48000}, {"bit_depth": 16}, {"channels": 1},
+                       {"sample_rate": 96000, "codec_header": flac_header(96000, 2, 24)}, {"bit_depth": 32, "codec_header": flac_header(44100, 2, 32)},
+                       {"codec_header": flac_header(44100, 1, 24)}):
+            with self.assertRaises(sm.SendspinProtocolError, msg=change):
+                self.validate(**change)
+
+    def test_other_codecs_and_formats_are_rejected(self):
+        for fmt in ({"codec": "mp3", "sample_rate": 44100, "channels": 2, "bit_depth": 16},
+                    {"codec": "opus", "sample_rate": 44100, "channels": 2, "bit_depth": 16},
+                    {"codec": "opus", "sample_rate": 48000, "channels": 1, "bit_depth": 16},
+                    {"codec": "pcm", "sample_rate": 48000, "channels": 2, "bit_depth": 24},
+                    {"codec": "pcm", "sample_rate": 96000, "channels": 2, "bit_depth": 16},
+                    {"codec": "pcm", "sample_rate": "48000", "channels": 2, "bit_depth": 16}, None, "pcm"):
+            with self.assertRaises(sm.SendspinProtocolError, msg=fmt):
+                sm.validate_stream_format(fmt)
+
+    def test_stream_start_validation_covers_flac_and_the_client_state_never_leaks_the_header_bytes(self):
+        payload = {"server_transmitted": 1, "player": {"codec": "flac", "sample_rate": 44100, "channels": 2, "bit_depth": 24,
+                                                       "codec_header": REAL_FLAC_HEADER}}
+        self.assertEqual(sm.parse_server_message(sm.json_frame("stream/start", payload))[0], "stream/start")
+        import json
+        state = json.loads(sm.build_client_state(True, 20, False, 0, fmt=payload["player"])[1:])
+        self.assertEqual(state["payload"]["player"]["format"], {"codec": "flac", "sample_rate": 44100, "channels": 2, "bit_depth": 24})
+
+
 class BuilderTests(unittest.TestCase):
     def parsed(self, frame):
         return json.loads(frame[1:])

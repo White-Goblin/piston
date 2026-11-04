@@ -8,7 +8,7 @@ import decky
 
 from ..advertise import sendspin_advertiser
 from ..proto import messages as m
-from . import crypto
+from . import codecs, crypto
 from .listener import DEFAULT_PORT as LISTEN_PORT, SendspinListener
 from .messages import client_id_for
 from .session import SendspinSession
@@ -71,7 +71,8 @@ class SendspinMixin:
         return SendspinSession(                                                                       # session must not close the new one's
             reader, writer, private_key=self._sendspin_private_key(), name=self._sendspin_name(), sink=sink,
             volume=settings["sendspin_volume"], muted=settings["sendspin_muted"], output_delay_ms=settings["sendspin_output_delay_ms"],
-            on_status=on_status, on_settings=self._sendspin_settings_changed, admit=admit, log=decky.logger.info)
+            on_status=on_status, on_settings=self._sendspin_settings_changed, admit=admit, log=decky.logger.info,
+            available=codecs.available())
 
     async def _sendspin_start(self) -> bool:
         """Start listening and advertising when enabled. False when disabled or when it could not start (status error)."""
@@ -83,6 +84,8 @@ class SendspinMixin:
                 return False
             if self.sendspin_listener is not None:
                 return True
+            codecs.set_logger(decky.logger.warning)
+            decky.logger.info(f"Sendspin codecs: {', '.join(sorted(codecs.available() | {'pcm'}, key=['flac', 'pcm', 'opus'].index))}")
             try:
                 crypto.load()
                 self._sendspin_client_id = client_id_for(crypto.x25519_public(self._sendspin_private_key()))

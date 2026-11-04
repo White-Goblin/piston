@@ -12,6 +12,7 @@ from typing import Callable
 
 from .. import wsproto
 from . import clock as clk
+from . import codecs
 from . import messages as sm
 from . import noise
 from .crypto import x25519_public
@@ -29,6 +30,8 @@ BUFFER_CAPACITY = 4_000_000
 REQUIRED_LEAD_TIME_MS = 250  # TODO(verify) with Music Assistant
 PLAYER_ROLE = "player@v1"
 POLL_INTERVAL_S = 0.01
+DECODE_FAILURE_LIMIT = 20  # decode failures within DECODE_FAILURE_WINDOW_S end the stream
+DECODE_FAILURE_WINDOW_S = 5.0
 OPEN_ATTEMPTS = 3  # the audio output can be slow to come up right after a wake; the server will not ask again
 OPEN_RETRY_S = 0.5
 
@@ -48,7 +51,7 @@ class SendspinSession:
                  output_delay_ms: int = 0, on_status: Callable | None = None, on_settings: Callable | None = None,
                  now_us: Callable[[], int] = monotonic_us, lookahead_us: int = 100_000, tolerance_us: int = 5_000,
                  burst_interval_s: float = BURST_INTERVAL_S, log: Callable[[str], None] = lambda m: None,
-                 admit: Callable | None = None):
+                 admit: Callable | None = None, available=frozenset(), monotonic: Callable[[], float] = time.monotonic):
         self._reader, self._writer = reader, writer
         self._private_key = private_key
         self._name = name
@@ -59,6 +62,11 @@ class SendspinSession:
         self._now = now_us
         self._burst_interval = burst_interval_s
         self._log = log
+        self.available = frozenset(available)  # the codecs this device can decode ("flac", "opus"); pcm always
+        self._monotonic = monotonic
+        self._decoder = None
+        self._decode_failures = []  # monotonic times of recent decode failures
+        self._seen_decode_errors = 0
         self._admit = admit  # async (session) -> None to accept or a goodbye reason to reject (set by the listener)
         self.client_id = sm.client_id_for(x25519_public(private_key))
         self.server_id = None
@@ -166,7 +174,7 @@ class SendspinSession:
         if message_type != "server/hello":
             raise sm.SendspinProtocolError(f"expected server/hello, got {message_type}")
         self.server_name = payload["name"]
-        await self._send(sm.build_client_hello(self._name, BUFFER_CAPACITY, unpaired_access=True,
+        await self._send(sm.build_client_hello(self._name, BUFFER_CAPACITY, unpaired_access=True, available=self.available,
                                                device_info={"product_name": "Piston", "manufacturer": "SteamOS"}))
         message_type, payload, _ = await self._recv(ACTIVATE_TIMEOUT_S)
         if message_type != "server/activate":
@@ -231,14 +239,16 @@ class SendspinSession:
                 self._pending_time.set_result((value, received_us))
         elif message_type == "audio":
             if self.streaming and self.clock.converged:
-                if not self.scheduler.submit(value.timestamp_us, value.pcm):
-                    self.dropped_frames += len(value.pcm) // self.scheduler.frame_bytes
+                if not self.scheduler.submit(value.timestamp_us, value.pcm):  # the chunk is queued as received (encoded)
+                    self.dropped_frames += 1
         elif message_type == "stream/start":
             if "player" in value and self.player_active:
                 await self._start_stream(value["player"])
         elif message_type == "stream/clear":
             roles = value.get("roles")
             if (roles is None or "player" in roles) and self.streaming:
+                if isinstance(self._decoder, codecs.OpusDecoder):
+                    self._decoder.reset()  # Opus predicts from the previous packet: after a clear the next one starts fresh
                 await self._apply_actions(self.scheduler.clear(value.get("from_timestamp")))
         elif message_type == "stream/end":
             roles = value.get("roles")
@@ -251,11 +261,38 @@ class SendspinSession:
             await self._apply_activate(value)
         # group/update, server/state and anything else do not concern a player without metadata
 
+    def _build_decoder(self, fmt: dict):
+        """(decoder or None, sample size in bits for the sink) for a validated stream/start format."""
+        codec = fmt["codec"]
+        if codec == "pcm":
+            return None, 16
+        if codec not in self.available:
+            raise sm.SendspinProtocolError(f"the server chose {codec}, which was not offered")
+        try:
+            if codec == "flac":
+                decoder = codecs.FlacDecoder(fmt["header"], fmt["sample_rate"], fmt["channels"], fmt["bit_depth"])
+                return decoder, 16 if decoder.sample_format == "s16" else 32
+            return codecs.OpusDecoder(fmt["sample_rate"], fmt["channels"]), 16
+        except codecs.CodecError as e:
+            raise sm.SendspinProtocolError(f"cannot decode this {codec} stream: {e}") from None
+
+    def _close_decoder(self) -> None:
+        decoder, self._decoder = self._decoder, None
+        if isinstance(decoder, codecs.OpusDecoder):
+            decoder.close()
+
     async def _start_stream(self, fmt: dict) -> None:
-        self.scheduler.set_format(fmt["sample_rate"], fmt["channels"] * fmt["bit_depth"] // 8)
+        checked = sm.validate_stream_format(fmt)
+        self._close_decoder()
+        decoder, sink_bits = self._build_decoder(checked)
+        self._decoder = decoder
+        self._decode_failures.clear()
+        self.scheduler.set_format(checked["sample_rate"], checked["channels"] * sink_bits // 8, decode=decoder.decode if decoder else None)
+        self._seen_decode_errors = 0
+        self._log(f"sendspin: stream {checked['codec']} {checked['sample_rate']} Hz {checked['bit_depth'] if checked['codec'] != 'opus' else 16}-bit")
         for attempt in range(1, OPEN_ATTEMPTS + 1):
             try:
-                await self.sink.open(fmt["sample_rate"], fmt["channels"], fmt["bit_depth"])
+                await self.sink.open(checked["sample_rate"], checked["channels"], sink_bits)
                 break
             except SinkError as e:
                 self._log(f"sendspin: audio output failed (attempt {attempt} of {OPEN_ATTEMPTS}): {e}")
@@ -268,11 +305,15 @@ class SendspinSession:
         self._on_status("streaming", server_name=self.server_name)
         await self._send_state()
 
-    async def _end_stream(self) -> None:
+    async def _end_stream(self, error: str | None = None) -> None:
         self.streaming, self.format = False, None
         self.scheduler.clear()
+        self._close_decoder()
         await self.sink.close()
-        self._on_status("connected", server_name=self.server_name)
+        if error:
+            self._on_status("error", server_name=self.server_name, error=error)
+        else:
+            self._on_status("connected", server_name=self.server_name)
         if self.player_active:
             await self._send_state()
 
@@ -351,12 +392,29 @@ class SendspinSession:
             elif isinstance(action, Flush):
                 await self.sink.flush()
 
+    async def _decode_failed_too_often(self) -> bool:
+        """DECODE_FAILURE_LIMIT failures within DECODE_FAILURE_WINDOW_S end the stream with status error."""
+        new = self.scheduler.decode_errors - self._seen_decode_errors
+        if new <= 0:
+            return False
+        self._seen_decode_errors = self.scheduler.decode_errors
+        now = self._monotonic()
+        self._decode_failures.extend([now] * new)
+        self._decode_failures = [t for t in self._decode_failures if now - t <= DECODE_FAILURE_WINDOW_S]
+        if len(self._decode_failures) < DECODE_FAILURE_LIMIT:
+            return False
+        self._log("sendspin: too many chunks could not be decoded; ending the stream")
+        await self._end_stream(error="decode failed")
+        return True
+
     async def _playout_loop(self) -> None:
         while True:
             if self.streaming:
                 try:
                     await self._apply_actions(self.scheduler.poll())
                     await self._apply_actions(self.scheduler.keepalive())
+                    if await self._decode_failed_too_often():
+                        continue
                 except SinkError as e:
                     self._log(f"sendspin: audio output error: {e}")
                     self._on_status("error", server_name=self.server_name, error=str(e))
@@ -384,6 +442,7 @@ class SendspinSession:
                 pass
         self.streaming = False
         self.scheduler.clear()
+        self._close_decoder()
         try:
             await self.sink.close()
         except Exception:  # noqa: BLE001

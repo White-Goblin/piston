@@ -22,6 +22,10 @@ GOODBYE_REASONS = ("another_server", "shutdown", "restart", "user_request", "una
                    "concurrent_attempt", "unpaired")
 # What this player accepts: raw 16-bit stereo (D6)
 PCM_RATES = (48000, 44100)
+FLAC_DEPTHS = (24, 16)  # preferred first
+OPUS_RATE = 48000       # Opus has no 44.1 kHz mode
+FLAC_HEADER_BYTES = 42  # 'fLaC' + the 4-byte block header + the 34-byte STREAMINFO
+CODECS = ("flac", "pcm", "opus")
 
 
 class SendspinProtocolError(Exception):
@@ -223,13 +227,62 @@ def _check_activate(p: dict) -> None:
     _require(roles is None or (isinstance(roles, list) and all(isinstance(r, str) for r in roles)), "active_roles invalid")
 
 
+def parse_flac_header(encoded) -> dict:
+    """Decode and check a stream/start `codec_header`: standard padded Base64 of `fLaC` + a STREAMINFO block (42 bytes).
+
+    Returns {"sample_rate", "channels", "bit_depth", "bytes"} where `bytes` is the header with the last-metadata-block flag
+    set (libFLAC needs it to start reading audio frames after the header)."""
+    _require(isinstance(encoded, str) and encoded.isascii() and len(encoded) <= 8192, "FLAC codec_header must be a Base64 string")
+    _require(len(encoded) % 4 == 0, "FLAC codec_header must use padded Base64")
+    try:
+        raw = base64.b64decode(encoded, validate=True)
+    except ValueError:
+        raise SendspinProtocolError("FLAC codec_header is not valid Base64") from None
+    _require(len(raw) == FLAC_HEADER_BYTES and raw[:4] == b"fLaC", "FLAC codec_header must be 'fLaC' followed by a STREAMINFO block")
+    _require(raw[4] & 0x7F == 0 and int.from_bytes(raw[5:8], "big") == 34, "FLAC codec_header must hold exactly a STREAMINFO block")
+    info = int.from_bytes(raw[18:26], "big")
+    rate, channels, depth = info >> 44, ((info >> 41) & 7) + 1, ((info >> 36) & 0x1F) + 1
+    header = raw[:4] + bytes([raw[4] | 0x80]) + raw[5:]
+    return {"sample_rate": rate, "channels": channels, "bit_depth": depth, "bytes": header}
+
+
+def offered_formats(available=frozenset()) -> list:
+    """The formats the player announces, preferred first: FLAC (24-bit before 16-bit), then PCM, then Opus last (lossy).
+    A codec whose library did not load is left out; PCM is always offered."""
+    formats = []
+    if "flac" in available:
+        formats += [{"codec": "flac", "channels": 2, "sample_rate": rate, "bit_depth": depth} for depth in FLAC_DEPTHS for rate in PCM_RATES]
+    formats += pcm_formats()
+    if "opus" in available:
+        formats.append({"codec": "opus", "channels": 2, "sample_rate": OPUS_RATE, "bit_depth": 16})
+    return formats
+
+
 def validate_stream_format(fmt) -> dict:
-    """The player stream format must be what we announced: 16-bit stereo pcm at 44100 or 48000 Hz."""
+    """A stream/start `player` object must be one of the offered formats. Returns a normalized copy: for FLAC it also
+    carries `header` (the checked codec_header bytes)."""
     _require(isinstance(fmt, dict), "stream format missing")
-    _require(fmt.get("codec") == "pcm", "only pcm is supported")
-    _require(fmt.get("channels") == 2 and fmt.get("bit_depth") == 16, "only 16-bit stereo is supported")
-    _require(_is_int(fmt.get("sample_rate")) and fmt["sample_rate"] in PCM_RATES, "unsupported sample rate")
-    return fmt
+    codec = fmt.get("codec")
+    _require(codec in CODECS, "unsupported codec")
+    _require(fmt.get("channels") == 2, "only stereo is supported")
+    _require(_is_int(fmt.get("sample_rate")), "sample_rate must be an integer")
+    rate = fmt["sample_rate"]
+    depth = fmt.get("bit_depth")
+    if codec != "opus":  # `bit_depth` is meaningful for pcm and flac only, ignored (and optional) for opus
+        _require(_is_int(depth), "bit_depth must be an integer")
+    else:
+        depth = 16
+    out = {"codec": codec, "sample_rate": rate, "channels": 2, "bit_depth": depth}
+    if codec == "pcm":
+        _require(rate in PCM_RATES and depth == 16, "pcm is supported as 16-bit at 44100 or 48000 Hz")
+    elif codec == "flac":
+        _require(rate in PCM_RATES and depth in FLAC_DEPTHS, "flac is supported as 16 or 24-bit at 44100 or 48000 Hz")
+        info = parse_flac_header(fmt.get("codec_header"))
+        _require((info["sample_rate"], info["channels"], info["bit_depth"]) == (rate, 2, depth), "the FLAC header disagrees with the stream format")
+        out["header"] = info["bytes"]
+    else:
+        _require(rate == OPUS_RATE, "opus is supported at 48000 Hz")
+    return out
 
 
 def _check_stream_start(p: dict) -> None:
@@ -292,8 +345,10 @@ def pcm_formats() -> list:
     return [{"codec": "pcm", "channels": 2, "sample_rate": rate, "bit_depth": 16} for rate in PCM_RATES]
 
 
-def build_client_hello(name: str, buffer_capacity: int, unpaired_access: bool = True, device_info: dict | None = None) -> bytes:
-    """Plaintext of the encrypted `client/hello`: the player role only (D14), pcm only (D6)."""
+def build_client_hello(name: str, buffer_capacity: int, unpaired_access: bool = True, device_info: dict | None = None,
+                       available=frozenset()) -> bytes:
+    """Plaintext of the encrypted `client/hello`: the player role only (D14); `available` names the codecs that can be decoded
+    ("flac", "opus"), PCM is always offered."""
     _text(name, "name")
     _require(_is_int(buffer_capacity) and buffer_capacity > 0, "buffer_capacity must be positive")
     payload = {"name": name}
@@ -302,7 +357,7 @@ def build_client_hello(name: str, buffer_capacity: int, unpaired_access: bool = 
         payload["device_info"] = dict(device_info)
     payload.update({
         "supported_roles": ["player@v1"],
-        "player@v1_support": {"supported_formats": pcm_formats(), "buffer_capacity": buffer_capacity},
+        "player@v1_support": {"supported_formats": offered_formats(available), "buffer_capacity": buffer_capacity},
         "supported_pair_methods": {"pairing_psk": {}},
         "unpaired_access": {"enabled": bool(unpaired_access)},
     })
@@ -317,7 +372,8 @@ def build_client_state(available: bool, volume: int, muted: bool, output_delay_m
     player = {"volume": volume, "muted": bool(muted), "output_delay_ms": output_delay_ms, "required_lead_time_ms": required_lead_time_ms,
               "min_buffer_ms": min_buffer_ms, "supported_commands": list(PLAYER_COMMANDS)}
     if fmt is not None:
-        player["format"] = validate_stream_format(fmt)
+        checked = validate_stream_format(fmt)
+        player["format"] = {k: checked[k] for k in ("codec", "sample_rate", "channels", "bit_depth")}
     return json_frame("client/state", {"available": bool(available), "player": player})
 
 

@@ -231,6 +231,49 @@ class PipeWireSinkTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(SinkError):
                 await s.open(*args)
 
+    async def test_32_bit_samples_open_pw_cat_as_s32_and_everything_follows_the_8_byte_frames(self):
+        env = Env()
+        s = env.sink(volume=30)
+        await s.open(44100, 2, 32)
+        proc = env.procs[0]
+        self.assertEqual(proc.args[proc.args.index("--format") + 1], "s32")
+        self.assertEqual(proc.args[proc.args.index("--rate") + 1], "44100")
+        self.assertGreaterEqual(len(proc.stdin.data), 882 * 8)             # silence flows in whole 8-byte frames while the stream is set up
+        self.assertEqual(len(proc.stdin.data) % 8, 0)
+        proc.stdin.data.clear()
+        self.assertTrue(await s.write_silence(2500))                       # 882 + 882 + 736 frames of 8 bytes
+        self.assertEqual(len(proc.stdin.data), 2500 * 8)
+        self.assertEqual(env.sets()[0], ("set-sink-input-volume", "40", "55%"))
+
+    async def test_a_flush_and_a_restart_keep_the_32_bit_format(self):
+        env = Env()
+        s = env.sink()
+        await s.open(48000, 2, 32)
+        await s.flush()
+        self.assertEqual(env.procs[1].args[env.procs[1].args.index("--format") + 1], "s32")
+        env.procs[1].die(1)
+        self.assertTrue(await s.write(bytes(8)))                           # restarted with the same format
+        self.assertEqual(env.procs[2].args[env.procs[2].args.index("--format") + 1], "s32")
+
+    async def test_16_bit_streams_are_unchanged(self):
+        env = Env()
+        await env.sink().open(48000, 2, 16)
+        proc = env.procs[0]
+        self.assertEqual(proc.args[proc.args.index("--format") + 1], "s16")
+        self.assertEqual(len(proc.stdin.data) % 4, 0)
+
+    async def test_other_sample_sizes_are_still_refused(self):
+        s = Env().sink()
+        for bits in (8, 24, 64):
+            with self.assertRaises(SinkError):
+                await s.open(48000, 2, bits)
+
+    async def test_the_fake_sink_writes_silence_in_the_frame_size_of_its_format(self):
+        f = FakeSink()
+        await f.open(48000, 2, 32)
+        await f.write_silence(10)
+        self.assertEqual(len(f.written), 10 * 8)
+
     async def test_write_appends_audio_and_write_silence_is_chunked(self):
         env = Env()
         s = env.sink()

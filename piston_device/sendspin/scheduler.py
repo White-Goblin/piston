@@ -27,20 +27,29 @@ class Flush(NamedTuple):
 
 
 class Scheduler:
+    """Chunks wait here as they arrived. With a `decode` callable they are queued ENCODED and decoded when released: the
+    server fills the announced buffer_capacity with encoded data (about 21 s of FLAC, 30 s of Opus ahead), and decoding on
+    arrival would need several times that in PCM. `queued_bytes` therefore counts what was queued, like the server does."""
+
     def __init__(self, to_local: Callable[[int], int], now: Callable[[], int], rate: int = 48000, frame_bytes: int = 4,
-                 latency_us: int = 50_000, lookahead_us: int = 100_000, tolerance_us: int = 5_000, capacity_bytes: int = 4_000_000):
+                 latency_us: int = 50_000, lookahead_us: int = 100_000, tolerance_us: int = 5_000, capacity_bytes: int = 4_000_000,
+                 decode: Callable[[bytes], bytes] | None = None):
         self._to_local, self._now = to_local, now
         self.latency_us, self.lookahead_us, self.tolerance_us = latency_us, lookahead_us, tolerance_us
         self.output_delay_us = 0
         self.capacity_bytes = capacity_bytes
         self.rate, self.frame_bytes = rate, frame_bytes
+        self.decode = decode
+        self.decode_errors = 0  # chunks that could not be decoded (dropped; the gap becomes silence)
         self._queue = deque()
         self._queued_bytes = 0
         self.cursor_us = None
 
-    def set_format(self, rate: int, frame_bytes: int) -> None:
-        """A new stream: drop everything and start aligning from scratch."""
+    def set_format(self, rate: int, frame_bytes: int, decode: Callable[[bytes], bytes] | None = None) -> None:
+        """A new stream: drop everything and start aligning from scratch. `decode` is the new stream's decoder (None for PCM)."""
         self.rate, self.frame_bytes = rate, frame_bytes
+        self.decode = decode
+        self.decode_errors = 0
         self._queue.clear()
         self._queued_bytes = 0
         self.cursor_us = None
@@ -53,8 +62,9 @@ class Scheduler:
         return frames * 1_000_000 / self.rate
 
     def submit(self, ts_us: int, pcm: bytes) -> bool:
-        """Queue a chunk. False when it was refused (not whole frames, or the server overran the announced capacity)."""
-        if not pcm or len(pcm) % self.frame_bytes:
+        """Queue a chunk. False when it was refused (empty, or without a decoder not whole frames, or the server overran the
+        announced capacity)."""
+        if not pcm or (self.decode is None and len(pcm) % self.frame_bytes):
             return False
         if self._queued_bytes + len(pcm) > self.capacity_bytes:
             return False
@@ -82,6 +92,14 @@ class Scheduler:
                 break
             self._queue.popleft()
             self._queued_bytes -= len(pcm)
+            if self.decode is not None:
+                try:
+                    pcm = self.decode(pcm)
+                except Exception:  # noqa: BLE001 - a chunk that cannot be decoded is dropped, whatever the decoder raised
+                    pcm = b""
+                if not pcm or len(pcm) % self.frame_bytes:
+                    self.decode_errors += 1
+                    continue  # the next chunk finds the cursor behind its target and fills the gap with silence
             earliest = now + self.latency_us
             cursor = earliest if self.cursor_us is None else max(self.cursor_us, earliest)
             offset = target - cursor

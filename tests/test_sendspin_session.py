@@ -228,7 +228,7 @@ class StreamTests(SessionTestCase):
         await h.connect()
         await h.peer.send("stream/start", {"server_transmitted": 1, "player": {**FMT48, "codec": "flac"}})
         await asyncio.wait_for(h.finished.wait(), 3)
-        self.assertIn("only pcm", h.reasons[0])
+        self.assertIn("protocol error", h.reasons[0])      # a flac stream was not offered and carries no valid header
 
     async def test_a_sink_that_cannot_open_reports_an_error_and_keeps_the_connection(self):
         h = await self.harness()

@@ -23,6 +23,7 @@ PACTL_TIMEOUT_S = 8.0
 RESTART_BACKOFF_S = (0.5, 1, 2, 5, 10)
 RUNTIME_DIR = f"/run/user/{os.getuid()}" if os.getuid() else "/run/user/1000"
 SILENCE_CHUNK_MS = 20
+SAMPLE_FORMATS = {16: "s16", 32: "s32"}  # sample size in bits -> pw-cat format
 FEED_INTERVAL_S = 0.02
 
 
@@ -187,21 +188,23 @@ class PipeWireSink(Sink):
         return self._format[1] * self._format[2] // 8
 
     async def open(self, rate: int, channels: int = 2, bits: int = 16) -> None:
-        if bits != 16 or channels not in (1, 2):
-            raise SinkError("only 16-bit mono or stereo is supported")
+        """`bits` is the size of one sample in the stream: 16 (s16) or 32 (s32, which carries 24-bit audio left-justified:
+        `pw-cat --format s32` plays it at the right level, measured on the device)."""
+        if bits not in SAMPLE_FORMATS or channels not in (1, 2):
+            raise SinkError("only 16-bit and 32-bit mono or stereo is supported")
         await self.close()
         self._format = (rate, channels, bits)
         self._failures = 0
         await self._start()
 
     async def _start(self) -> None:
-        rate, channels, _ = self._format
+        rate, channels, bits = self._format
         self._seq += 1
         self._node = f"piston-sendspin-{self._seq}"
         self._index = None
         try:
             self._proc = await self._spawn(
-                "pw-cat", "--playback", "--raw", "--format", "s16", "--rate", str(rate), "--channels", str(channels),
+                "pw-cat", "--playback", "--raw", "--format", SAMPLE_FORMATS[bits], "--rate", str(rate), "--channels", str(channels),
                 "--latency", f"{self.latency_us // 1000}ms",
                 "-P", f"node.name={self._node} media.name=Piston-Sendspin application.name=Piston", "-",
                 stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE, env=self._env)

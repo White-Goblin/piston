@@ -5,7 +5,7 @@ from unittest import mock
 from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir
 from piston_device import advertise, resume as resume_module
 from piston_device.proto import messages as m
-from piston_device.sendspin import crypto, mixin as sendspin_mixin
+from piston_device.sendspin import codecs, crypto, messages as sendspin_messages, mixin as sendspin_mixin
 from piston_device.sendspin.sink import FakeSink
 from tests.sendspin_peer import FakeServer
 import main
@@ -98,6 +98,49 @@ class StartTests(PluginCase):
             await self.boot()
         self.assertEqual(self.group()["status"], "error")
         self.assertIn("no free port", self.group()["error"])
+
+
+class CodecOfferTests(PluginCase):
+    async def connect_and_hello(self):
+        peer = FakeServer()
+        await peer.connect(self.plugin.sendspin_listener.port)
+        await peer.handshake()
+        hello = await peer.hello_and_activate()
+        peer.start_pump()
+        self.addCleanup(peer.close)
+        return [(f["codec"], f["sample_rate"], f["bit_depth"]) for f in hello["player@v1_support"]["supported_formats"]]
+
+    async def test_the_plugin_offers_what_it_can_decode_in_the_preferred_order(self):
+        with mock.patch.object(codecs, "available", lambda: {"flac", "opus"}):
+            await self.boot()
+            offered = await self.connect_and_hello()
+        self.assertEqual(offered, [("flac", 48000, 24), ("flac", 44100, 24), ("flac", 48000, 16), ("flac", 44100, 16),
+                                   ("pcm", 48000, 16), ("pcm", 44100, 16), ("opus", 48000, 16)])
+
+    async def test_without_any_decoder_it_offers_pcm_and_still_starts(self):
+        with mock.patch.object(codecs, "available", lambda: set()):
+            await self.boot()
+            offered = await self.connect_and_hello()
+        self.assertEqual(offered, [("pcm", 48000, 16), ("pcm", 44100, 16)])
+        await self.until(lambda: self.group()["status"] == "connected")
+
+    async def test_a_single_missing_codec_leaves_the_other(self):
+        with mock.patch.object(codecs, "available", lambda: {"opus"}):
+            await self.boot()
+            offered = await self.connect_and_hello()
+        self.assertEqual([c for c, _, _ in offered], ["pcm", "pcm", "opus"])
+
+    async def test_the_available_codecs_are_logged_once_at_start(self):
+        fake_decky.logger.handlers.clear()
+        with mock.patch.object(codecs, "available", lambda: {"flac", "opus"}), self.assertLogs("decky-test", "INFO") as logs:
+            await self.boot()
+        self.assertTrue(any("Sendspin codecs: flac, pcm, opus" in line for line in logs.output))
+
+    async def test_a_codec_check_that_raises_does_not_prevent_the_player_from_starting(self):
+        with mock.patch.object(codecs, "available", side_effect=RuntimeError("boom")):
+            await self.boot()
+        self.assertIsNone(self.plugin.sendspin_listener)                    # the start failed safely...
+        self.assertEqual(self.plugin.groups.get("sendspin") is not None, True)  # ...and the plugin and its status group are intact
 
 
 class EnableCommandTests(PluginCase):
