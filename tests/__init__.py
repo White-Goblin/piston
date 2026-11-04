@@ -9,11 +9,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "py_modules"))
 
 _settings_dir = tempfile.mkdtemp(prefix="decky-ha-settings-")
+_runtime_dir = tempfile.mkdtemp(prefix="decky-ha-runtime-")
 
 fake = types.ModuleType("decky")
 fake.logger = logging.getLogger("decky-test")
 fake.logger.addHandler(logging.NullHandler())  # keep test output quiet
 fake.DECKY_PLUGIN_SETTINGS_DIR = _settings_dir
+fake.DECKY_PLUGIN_RUNTIME_DIR = _runtime_dir
 fake.DECKY_PLUGIN_DIR = ROOT
 fake.emitted = []  # (event, args) recorded by emit
 

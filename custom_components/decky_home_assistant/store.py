@@ -12,6 +12,7 @@ entity can exist at startup without showing a stale reading as live:
 | sensors     | keys (the names of the readings, as `{"keys": [...]}`)    | the readings                              |
 | pip         | nothing                                                   | everything                                |
 | media       | nothing                                                   | everything (what is playing is live)      |
+| update      | plugin_version, auto_update, latch (last failed update)   | nothing (all of it is stable)             |
 
 The file is `.storage/decky_home_assistant.<entry_id>`. It also records `last_connected`, the last moment there was a
 connection to the device (the unreachable-too-long repair issue is measured from it).
@@ -92,16 +93,34 @@ def _parse(text) -> datetime | None:
     return moment.replace(tzinfo=timezone.utc) if moment and moment.tzinfo is None else moment
 
 
+def _clean_update(value) -> dict:
+    """The stored plugin-update facts, with anything of the wrong shape dropped."""
+    out: dict = {}
+    if not isinstance(value, dict):
+        return out
+    if isinstance(value.get("plugin_version"), str):
+        out["plugin_version"] = value["plugin_version"]
+    if isinstance(value.get("auto_update"), bool):
+        out["auto_update"] = value["auto_update"]
+    latch = value.get("latch")
+    if isinstance(latch, dict) and isinstance(latch.get("version"), str) and isinstance(latch.get("reason"), str):
+        out["latch"] = {"version": latch["version"], "reason": latch["reason"]}
+    return out
+
+
 class DeckyStore:
     """`current()` returns (live groups, last_connected, connected) for this entry."""
 
     def __init__(self, hass, entry_id: str, current: Callable[[], tuple[dict, datetime | None, bool]], *,
-                 now: Callable[[], datetime] = lambda: datetime.now(timezone.utc), store: Store | None = None):
+                 now: Callable[[], datetime] = lambda: datetime.now(timezone.utc), store: Store | None = None,
+                 current_update: Callable[[], dict] | None = None):
         self._store = store or _Storage(hass, STORAGE_VERSION, f"{DOMAIN}.{entry_id}")
         self._current, self._now = current, now
         self._stored: dict = {}                 # groups read from the file (or last written)
         self._stored_last_connected: datetime | None = None
         self._requested = None                  # what the last save request covered, to skip identical ones
+        self._current_update = current_update or (lambda: {})
+        self._stored_update: dict = {}
 
     # --- reading ---------------------------------------------------------------
 
@@ -111,17 +130,19 @@ class DeckyStore:
             data = await self._store.async_load()
         except Exception as e:  # noqa: BLE001 - corrupt file or a newer storage version
             _LOGGER.warning("Ignoring the stored device state, it cannot be read (%s)", e)
-            return {"groups": {}, "last_connected": None}
+            return {"groups": {}, "last_connected": None, "update": {}}
         if not data:  # no file yet, or an older version that held nothing
-            return {"groups": {}, "last_connected": None}
+            return {"groups": {}, "last_connected": None, "update": {}}
         groups = data.get("groups") if isinstance(data, dict) else None
         if not isinstance(groups, dict) or not all(isinstance(g, dict) for g in groups.values()):
             _LOGGER.warning("Ignoring the stored device state, it has an unexpected shape")
-            return {"groups": {}, "last_connected": None}
+            return {"groups": {}, "last_connected": None, "update": {}}
         self._stored = copy.deepcopy(groups)
+        self._stored_update = _clean_update(data.get("update"))
         self._stored_last_connected = _parse(data.get("last_connected"))
         self._requested = self._snapshot()
-        return {"groups": copy.deepcopy(groups), "last_connected": self._stored_last_connected}
+        return {"groups": copy.deepcopy(groups), "last_connected": self._stored_last_connected,
+                "update": copy.deepcopy(self._stored_update)}
 
     # --- writing ---------------------------------------------------------------
 
@@ -134,13 +155,14 @@ class DeckyStore:
         return last or self._stored_last_connected
 
     def _snapshot(self) -> tuple:
-        return (self._merged_groups(), _iso(self._last_connected()))
+        return (self._merged_groups(), _iso(self._last_connected()), _clean_update(self._current_update()))
 
     def _data(self) -> dict:
         """What is written: the merged groups, and `last_connected` as of now while the device is connected."""
         _, _, connected = self._current()
         last = self._now() if connected else self._last_connected()
-        return {"saved_at": _iso(self._now()), "last_connected": _iso(last), "groups": self._merged_groups()}
+        return {"saved_at": _iso(self._now()), "last_connected": _iso(last), "groups": self._merged_groups(),
+                "update": _clean_update(self._current_update())}
 
     def note_changed(self) -> None:
         """Called on every coordinator change: schedule a delayed save only if the stored data would differ."""

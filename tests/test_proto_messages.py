@@ -114,3 +114,26 @@ class NegotiateTests(unittest.TestCase):
         with self.assertRaises(m.ProtocolError) as cm:
             m.negotiate(1, 1, 3, 2)
         self.assertEqual(cm.exception.data["peer"], "new")
+
+
+class UpdateFrameTests(unittest.TestCase):
+    SHA = "a" * 64
+    URL = "https://github.com/o/r/releases/download/v1.2.3/decky-home-assistant-1.2.3.zip"
+
+    def test_roundtrip(self):
+        for frame in (m.update("1.2.3", self.URL, self.SHA), m.update_status("downloading", "1.2.3"),
+                      m.update_status("failed", "1.2.3", "hash"), m.update_status("idle")):
+            self.assertEqual(m.parse(m.encode(frame)), frame)
+
+    def test_rejects_each_bad_update_field(self):
+        good = m.update("1.2.3", self.URL, self.SHA)
+        for key, value in (("version", "1.2"), ("version", 3), ("url", ""), ("url", "x" * 513), ("url", 5),
+                           ("sha256", "A" * 64), ("sha256", "a" * 63), ("sha256", None)):
+            with self.assertRaises(m.ProtocolError, msg=f"{key}={value!r}"):
+                m.parse(m.encode({**good, key: value}))
+
+    def test_rejects_each_bad_status_field(self):
+        good = m.update_status("failed", "1.2.3", "hash")
+        for key, value in (("state", "nope"), ("state", None), ("version", "x"), ("reason", "other")):
+            with self.assertRaises(m.ProtocolError, msg=f"{key}={value!r}"):
+                m.parse(m.encode({**good, key: value}))

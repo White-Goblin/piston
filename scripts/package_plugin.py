@@ -1,8 +1,9 @@
 """Build the Decky plugin zip: python3 scripts/package_plugin.py [output-dir]
 
-Run `pnpm run build` first. The zip holds one folder named after the plugin, the layout Decky Loader installs
+Also writes `SHA256SUMS` next to the zip. Run `pnpm run build` first. The zip holds one folder named after the plugin, the layout Decky Loader installs
 from ("Install plugin from ZIP" in Decky's developer settings).
 """
+import hashlib
 import json
 import os
 import sys
@@ -39,7 +40,18 @@ def build(out_dir: str, root: str = ROOT) -> str:
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
         for path, name in collect(root):
             z.write(path, f"{PLUGIN_DIR}/{name}")
+    write_checksums(target)
     return target
+
+
+def write_checksums(zip_path: str) -> str:
+    """Write `SHA256SUMS` (sha256sum format) next to the zip; the integration checks downloads against it."""
+    with open(zip_path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    sums = os.path.join(os.path.dirname(zip_path), "SHA256SUMS")
+    with open(sums, "w", encoding="utf-8") as f:
+        f.write(f"{digest}  {os.path.basename(zip_path)}\n")
+    return sums
 
 
 if __name__ == "__main__":

@@ -70,6 +70,11 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         },
         "client": {"probe_mode": getattr(client, "probe_mode", None), "failed_attempts": getattr(client, "failed_attempts", None),
                    "boot_id": getattr(client, "boot_id", None)},
+        "update": {
+            "plugin_version": coordinator.plugin_version, "target_version": coordinator.target_version,
+            "auto_update": coordinator.auto_update, "state": coordinator.update_state, "skewed": coordinator.skewed,
+            "last_failure": coordinator.update_latch,
+        },
         "groups": _private_media(_anonymous_controllers(coordinator.groups)),
     }
     return async_redact_data(_plain(report), TO_REDACT)

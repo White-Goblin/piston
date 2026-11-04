@@ -37,7 +37,9 @@ class ProtocolServer:
                  commands: dict, snapshot: Callable[[], dict], host: str = "0.0.0.0", port: int = DEFAULT_PORT,
                  ping_interval: float = 20, idle_timeout: float = 60, hello_timeout: float = 10,
                  on_connection: Callable[[bool], None] | None = None,
-                 hello_extra: Callable[[], dict] | None = None):
+                 hello_extra: Callable[[], dict] | None = None,
+                 on_update: Callable[[dict], None] | None = None,
+                 update_status: Callable[[], dict] | None = None):
         self._device_id, self._secret, self.pairing = device_id, secret, pairing
         self.commands: dict[str, Handler] = commands
         self._snapshot = snapshot
@@ -45,6 +47,11 @@ class ProtocolServer:
         self._ping_interval, self._idle_timeout, self._hello_timeout = ping_interval, idle_timeout, hello_timeout
         self._on_connection = on_connection
         self._hello_extra = hello_extra or (lambda: {})
+        # Update lane: `on_update(frame)` starts an install (sync, must return quickly, may raise ProtocolError);
+        # `update_status()` returns the current {state, version, reason?} for the greeting of a lane connection.
+        self._on_update = on_update
+        self._update_status = update_status or (lambda: {"state": "idle", "version": ""})
+        self.update_conn: _Conn | None = None  # the connection update_status frames go to (normal or lane)
         self._server = None
         self.conn: _Conn | None = None
         # Sequencing (protocol v2): a state frame carries this run's boot_id and a per-group counter
@@ -63,8 +70,8 @@ class ProtocolServer:
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()
-        if self.conn is not None:
-            await self._close(self.conn, 1001, "going away")
+        for conn in {id(c): c for c in (self.conn, self.update_conn) if c is not None}.values():
+            await self._close(conn, 1001, "going away")
 
     # --- pushes to the connected integration ------------------------------
 
@@ -72,6 +79,22 @@ class ProtocolServer:
         self._seq[name] = self._seq.get(name, 0) + 1
         if self.conn is not None:
             self.conn.send(m.state(name, data, self.boot_id, self._seq[name]))
+
+    def push_update_status(self, state: str, version: str = "", reason: str | None = None) -> None:
+        if self.update_conn is not None:
+            self.update_conn.send(m.update_status(state, version, reason))
+
+    def _handle_update(self, conn: _Conn, frame: dict) -> None:
+        """An `update` frame on an authenticated connection (normal or lane)."""
+        version = frame["version"]
+        try:
+            if self._on_update is None:
+                raise m.ProtocolError(m.BAD_REQUEST, "updates are not supported")
+            self._on_update(frame)
+        except m.ProtocolError as e:
+            reason = "busy" if e.code == m.BUSY else "bad_request"
+            log.info("update to %s refused: %s", version, e.message)
+            conn.send(m.update_status("failed", version, reason))
 
     def _snapshot_frame(self, name: str, data: dict) -> dict:
         """A snapshot carries the group's current seq without counting as a new push (a never-pushed group gets seq 1)."""
@@ -117,6 +140,8 @@ class ProtocolServer:
         finally:
             conn.closed = True
             writer.close()
+            if self.update_conn is conn:
+                self.update_conn = None
             if self.conn is conn:
                 self.conn = None
                 if self._on_connection:
@@ -143,11 +168,14 @@ class ProtocolServer:
         first = await self._read(conn, self._hello_timeout)
         if first["type"] != "hello":
             raise wsproto.WsClosed(CLOSE_BAD_REQUEST, "hello expected")
+        skew = None
         try:
             m.negotiate(PROTOCOL_VERSION, MIN_PROTOCOL_VERSION, first["proto"], first["min_proto"])
         except m.ProtocolError as e:
-            conn.send({**m.result_error(0, e.code, e.message), "peer": e.data.get("peer")})
-            await self._close(conn, CLOSE_VERSION, e.message)
+            skew = e
+        if skew is not None and not secret:
+            # an unpaired device never offers the update lane
+            await self._refuse_skew(conn, skew)
             return
 
         if secret:
@@ -157,7 +185,34 @@ class ProtocolServer:
             secret = self._secret()
             if not secret:
                 return
-        await self._serve(conn)
+        if skew is not None:
+            await self._lane(conn, skew)  # authenticated, but the protocols differ: updates only
+        else:
+            await self._serve(conn)
+
+    async def _refuse_skew(self, conn: _Conn, skew: m.ProtocolError) -> None:
+        conn.send({**m.result_error(0, skew.code, skew.message), "peer": skew.data.get("peer")})
+        await self._close(conn, CLOSE_VERSION, skew.message)
+
+    async def _lane(self, conn: _Conn, skew: m.ProtocolError) -> None:
+        """Version skew after authentication: only `update` frames are served, everything else is version_skew."""
+        old, self.update_conn = self.update_conn, conn
+        if old is not None and old is not self.conn:
+            await self._close(old, CLOSE_REPLACED, "replaced by a new connection")
+        status = self._update_status()
+        conn.send(m.update_status(status.get("state", "idle"), status.get("version", ""), status.get("reason")))
+        pinger = asyncio.create_task(self._pinger(conn))
+        try:
+            while True:
+                frame = await self._read(conn, self._idle_timeout)
+                if frame["type"] != "update":
+                    await self._refuse_skew(conn, skew)
+                    return
+                self._handle_update(conn, frame)
+        finally:
+            pinger.cancel()
+            if self.update_conn is conn:
+                self.update_conn = None
 
     async def _authenticate(self, conn: _Conn, secret: bytes) -> None:
         nonce_d = auth.make_challenge()
@@ -186,6 +241,7 @@ class ProtocolServer:
 
     async def _serve(self, conn: _Conn) -> None:
         old, self.conn = self.conn, conn
+        self.update_conn = conn
         if old is not None:
             await self._close(old, CLOSE_REPLACED, "replaced by a new connection")
         if self._on_connection:
@@ -197,6 +253,9 @@ class ProtocolServer:
         try:
             while True:
                 frame = await self._read(conn, self._idle_timeout)
+                if frame["type"] == "update":
+                    self._handle_update(conn, frame)
+                    continue
                 if frame["type"] != "cmd":
                     conn.send(m.result_error(0, m.BAD_REQUEST, "only commands are accepted"))
                     continue

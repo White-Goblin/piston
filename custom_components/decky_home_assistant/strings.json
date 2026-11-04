@@ -97,6 +97,9 @@
     "switch": {
       "desktop_mode": {
         "name": "Desktop mode"
+      },
+      "auto_update": {
+        "name": "Install plugin updates automatically"
       }
     },
     "button": {
@@ -150,12 +153,17 @@
       "pip_camera": {
         "name": "PiP camera"
       }
+    },
+    "update": {
+      "plugin": {
+        "name": "Plugin update"
+      }
     }
   },
   "issues": {
     "version_skew_old": {
       "title": "The plugin on {name} is too old",
-      "description": "Update the Decky Home Assistant plugin on the device (in Decky Loader) so it matches this integration."
+      "description": "Update the Decky Home Assistant plugin on the device (in Decky Loader) so it matches this integration. Plugins from version 0.4.0 on are updated by Home Assistant itself."
     },
     "version_skew_new": {
       "title": "The Decky Home Assistant integration is too old for {name}",
@@ -164,6 +172,14 @@
     "device_unreachable": {
       "title": "{name} has not been reachable for over a day",
       "description": "Home Assistant could not connect to {name} for more than 24 hours. If the device is normally switched off, you can ignore this; the message disappears when it connects again. Otherwise check that it is on, that the Decky Home Assistant plugin is running on it and that it is on the same network."
+    },
+    "plugin_update_failed": {
+      "title": "The plugin update on {name} failed",
+      "description": "Home Assistant asked {name} to install plugin version {version}, but {reason}. The old plugin is still installed and Home Assistant will not try again by itself. Press Install on the Plugin update entity to retry, or install the plugin zip from the GitHub release through Decky Loader."
+    },
+    "version_skew_updatable": {
+      "title": "The plugin on {name} does not match this integration",
+      "description": "The plugin on {name} is a different version from this integration and automatic plugin updates are off. Press Install on the Plugin update entity, or turn on Install plugin updates automatically."
     }
   },
   "selector": {

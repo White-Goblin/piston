@@ -429,3 +429,101 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
     async def test_other_device_at_the_address_is_rejected(self):
         with self.assertRaises(c.AuthFailed):
             await c.open_session(self.transport, "127.0.0.1", self.port, "someone-else", self.SECRET)
+
+
+class LaneTests(unittest.IsolatedAsyncioTestCase):
+    """A device with the update lane, a skewed integration and the update frames in both directions."""
+    SECRET = b"s" * 32
+
+    async def asyncSetUp(self):
+        self.dev = DeviceFixture(self.SECRET)
+        self.dev.server._hello_extra = lambda: m.device_hello_extra("0.4.0", 1)
+        self.updates, self.statuses, self.hellos, self.problems, self.connection = [], [], [], [], []
+        self.dev.server._on_update = self.updates.append
+        self.port = await self.dev.start()
+        self.addAsyncCleanup(self.dev.server.stop)
+        self.transport = StdTransport()
+        self.sleeps = []
+
+    async def fake_sleep(self, seconds):
+        self.sleeps.append(seconds)
+        await asyncio.sleep(0.05)
+
+    def make(self, **kw):
+        client = c.DeckyClient(self.transport, "127.0.0.1", self.port, "dev123", self.SECRET,
+                               on_state=lambda n, d: None, on_event=lambda n, d: None, on_connection=self.connection.append,
+                               on_problem=self.problems.append, on_hello=lambda h, s: self.hellos.append((h, s)),
+                               on_update_status=self.statuses.append, sleep=self.fake_sleep, **kw)
+        self.addAsyncCleanup(client.stop)
+        return client
+
+    async def until(self, cond, seconds=3):
+        for _ in range(int(seconds / 0.01)):
+            if cond():
+                return
+            await asyncio.sleep(0.01)
+        self.fail("condition not met")
+
+    async def test_a_skewed_device_with_the_lane_is_authenticated_and_can_be_updated(self):
+        client = self.make(own=(9, 9))
+        await client.start()
+        await self.until(lambda: client.lane_connected)
+        self.assertEqual(self.hellos[0][0]["plugin_version"], "0.4.0")
+        self.assertEqual(self.hellos[0][1], "old")
+        self.assertTrue(isinstance(self.problems[0], c.VersionSkew) and self.problems[0].updatable)
+        self.assertEqual(self.connection, [])                       # never a regular connection
+        await self.until(lambda: self.statuses)                     # the lane greeting
+        await client.send_update("1.2.3", "https://x/y.zip", "a" * 64)
+        await self.until(lambda: self.updates)
+        self.assertEqual(self.updates[0]["version"], "1.2.3")
+        self.dev.server.push_update_status("downloading", "1.2.3")
+        await self.until(lambda: self.statuses[-1]["state"] == "downloading")
+
+    async def test_a_normal_connection_reports_the_hello_and_carries_updates(self):
+        client = self.make()
+        await client.start()
+        await self.until(lambda: self.connection == [True])
+        self.assertEqual((self.hellos[0][0]["plugin_version"], self.hellos[0][1]), ("0.4.0", None))
+        self.assertFalse(client.lane_connected)
+        await client.send_update("1.2.3", "https://x/y.zip", "a" * 64)
+        await self.until(lambda: self.updates)
+        self.dev.server.push_update_status("installing", "1.2.3")
+        await self.until(lambda: self.statuses and self.statuses[-1]["state"] == "installing")
+
+    async def test_a_skewed_device_without_the_lane_is_a_plain_version_skew(self):
+        self.dev.server._hello_extra = lambda: {}
+        client = self.make(own=(9, 9))
+        await client.start()
+        await self.until(lambda: self.problems)
+        self.assertFalse(self.problems[0].updatable)
+        self.assertFalse(client.lane_connected)
+        self.assertGreaterEqual(self.sleeps[0], 60)
+
+    async def test_send_update_offline_raises(self):
+        client = self.make()
+        with self.assertRaises(c.DeviceOffline):
+            await client.send_update("1.2.3", "https://x/y.zip", "a" * 64)
+
+    async def test_the_lane_retries_quickly_while_an_update_runs_and_slowly_otherwise(self):
+        client = self.make(own=(9, 9))
+        await client.start()
+        await self.until(lambda: client.lane_connected)
+        self.dev.server.push_update_status("installing", "1.2.3")
+        await self.until(lambda: self.statuses[-1]["state"] == "installing")
+        await self.dev.server.stop()                                 # the device restarts for the install
+        await self.until(lambda: self.sleeps)
+        self.assertEqual(self.sleeps[0], c.PROBE_FAST_SECONDS)
+
+    async def test_closing_the_lane_is_reported(self):
+        closed = []
+        client = self.make(own=(9, 9), on_lane_closed=lambda: closed.append(True))
+        await client.start()
+        await self.until(lambda: client.lane_connected)
+        await self.dev.server.stop()
+        await self.until(lambda: closed)
+        self.assertFalse(client.lane_connected)
+
+    async def test_open_session_still_raises_version_skew_for_a_lane_device(self):
+        with self.assertRaises(c.VersionSkew) as cm:
+            await c.open_session(self.transport, "127.0.0.1", self.port, "dev123", self.SECRET, own=(9, 9))
+        self.assertTrue(cm.exception.updatable)

@@ -1,6 +1,8 @@
 """Frame shapes, validation and version negotiation for the LAN protocol (stdlib only)."""
 import json
 
+import re
+
 from . import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION
 
 MAX_FRAME_BYTES = 1_000_000
@@ -23,7 +25,13 @@ INTERNAL = "internal"
 VERSION_SKEW = "version_skew"
 ERROR_CODES = (BAD_REQUEST, UNAUTHORIZED, BUSY, OFFLINE, NOT_RUNNING, UNSUPPORTED, INTERNAL, VERSION_SKEW)
 
-FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event")
+FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status")
+
+# Update lane frames (see docs/protocol.md): HA tells the device which release to install, the device reports progress.
+UPDATE_STATES = ("idle", "downloading", "waiting_for_ui", "installing", "failed")
+UPDATE_REASONS = ("bad_request", "busy", "download", "hash", "archive", "installer", "version")
+MAX_UPDATE_URL_LEN = 512
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class ProtocolError(Exception):
@@ -39,8 +47,27 @@ def _require(cond: bool, message: str) -> None:
         raise ProtocolError(BAD_REQUEST, message)
 
 
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
+
+
 def hello(device_id: str, proto: int = PROTOCOL_VERSION, min_proto: int = MIN_PROTOCOL_VERSION) -> dict:
     return {"type": "hello", "proto": proto, "min_proto": min_proto, "device_id": device_id}
+
+
+def device_hello_extra(plugin_version: str, lane: int) -> dict:
+    """Fields the device adds to its hello (frozen with the update lane)."""
+    return {"plugin_version": plugin_version, "lane": lane}
+
+
+def update(version: str, url: str, sha256: str) -> dict:
+    return {"type": "update", "version": version, "url": url, "sha256": sha256}
+
+
+def update_status(state: str, version: str = "", reason: str | None = None) -> dict:
+    frame = {"type": "update_status", "state": state, "version": version}
+    if reason is not None:
+        frame["reason"] = reason
+    return frame
 
 
 def cmd(msg_id: int, name: str, data: dict | None = None) -> dict:
@@ -97,6 +124,24 @@ def parse(text) -> dict:
             _require(isinstance(frame.get(key), int) and not isinstance(frame.get(key), bool) and frame[key] >= 0,
                      f"hello.{key} must be a non-negative integer")
         _require(isinstance(frame.get("device_id"), str) and frame["device_id"], "hello.device_id required")
+        if "plugin_version" in frame:
+            _require(isinstance(frame["plugin_version"], str) and VERSION_RE.match(frame["plugin_version"]),
+                     "hello.plugin_version must look like 1.2.3")
+        if "lane" in frame:
+            _require(isinstance(frame["lane"], int) and not isinstance(frame["lane"], bool) and frame["lane"] >= 0,
+                     "hello.lane must be a non-negative integer")
+    elif ftype == "update":
+        _require(isinstance(frame.get("version"), str) and VERSION_RE.match(frame["version"]), "update.version must look like 1.2.3")
+        url = frame.get("url")
+        _require(isinstance(url, str) and 0 < len(url) <= MAX_UPDATE_URL_LEN, "update.url invalid")
+        _require(isinstance(frame.get("sha256"), str) and SHA256_RE.match(frame["sha256"]), "update.sha256 must be 64 lowercase hex digits")
+    elif ftype == "update_status":
+        _require(frame.get("state") in UPDATE_STATES, "update_status.state invalid")
+        version = frame.get("version", "")
+        _require(isinstance(version, str) and (version == "" or VERSION_RE.match(version)), "update_status.version invalid")
+        frame.setdefault("version", "")
+        if "reason" in frame:
+            _require(frame["reason"] in UPDATE_REASONS, "update_status.reason invalid")
     elif ftype == "cmd":
         _require(_is_id(frame.get("id")), "cmd.id must be a non-negative integer")
         _require(_is_name(frame.get("name")), "cmd.name invalid")

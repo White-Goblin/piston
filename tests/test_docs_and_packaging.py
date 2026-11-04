@@ -99,6 +99,20 @@ class PackagingTests(unittest.TestCase):
         self.assertEqual(names, sorted(f"Decky Home Assistant/{n}" for n in (
             "LICENSE", "decky_ha/a.py", "dist/index.js", "dist/player.js", "main.py", "package.json", "plugin.json", "py_modules/.keep")))
 
+    def test_checksums_file_matches_the_zip_in_sha256sum_format(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
+            self.make_tree(root)
+            target = package_plugin.build(out, root)
+            with open(os.path.join(out, "SHA256SUMS"), encoding="utf-8") as f:
+                lines = f.read().splitlines()
+            with open(target, "rb") as z:
+                digest = hashlib.sha256(z.read()).hexdigest()
+        self.assertEqual(lines, [f"{digest}  decky-home-assistant-9.9.9.zip"])
+
+    def test_release_workflow_attaches_the_checksums(self):
+        self.assertIn("out/SHA256SUMS", read(".github", "workflows", "release.yml"))
+
     def test_refuses_to_package_without_a_build(self):
         with tempfile.TemporaryDirectory() as root:
             with self.assertRaises(SystemExit):

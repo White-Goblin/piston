@@ -44,9 +44,10 @@ class CommandError(Exception):
 class VersionSkew(Exception):
     """`peer` is "old" (the device plugin needs updating) or "new" (this integration needs updating)."""
 
-    def __init__(self, peer: str):
+    def __init__(self, peer: str, updatable: bool = False):
         super().__init__(f"device is too {peer}")
         self.peer = peer
+        self.updatable = updatable  # True: the device is authenticated and has the update lane open (see docs/protocol.md)
 
 
 class AuthFailed(Exception):
@@ -78,6 +79,13 @@ async def _recv_frame(conn: Connection, timeout: float | None) -> dict:
         raise ConnectionClosed(f"bad frame: {e.message}") from None
 
 
+async def _read_hello(conn: Connection) -> dict:
+    hello = await _recv_frame(conn, CONNECT_TIMEOUT)
+    if hello["type"] != "hello":
+        raise ConnectionClosed("hello expected")
+    return hello
+
+
 async def _hello(conn: Connection, own: tuple[int, int]) -> dict:
     """Read the device's hello, send ours, check the versions."""
     hello = await _recv_frame(conn, CONNECT_TIMEOUT)
@@ -91,13 +99,43 @@ async def _hello(conn: Connection, own: tuple[int, int]) -> dict:
     return hello
 
 
+@dataclass
+class Session:
+    """An authenticated connection. `skew` is None for a normal one, or "old"/"new" when the protocol versions
+    differ but the device has the update lane (only `update` / `update_status` frames flow then)."""
+    conn: Connection
+    hello: dict
+    skew: str | None = None
+
+
 async def open_session(transport: Transport, host: str, port: int, device_id: str, secret: bytes,
                        own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
                        connect_timeout: float | None = None) -> Connection:
-    """Connect and authenticate with the stored secret. The caller owns the returned connection."""
+    """Connect and authenticate with the stored secret. The caller owns the returned connection.
+
+    Raises VersionSkew when the protocol versions differ (use `open_session_ex` to keep such a connection for updates)."""
+    session = await open_session_ex(transport, host, port, device_id, secret, own, connect_timeout)
+    if session.skew is not None:
+        await session.conn.close()
+        raise VersionSkew(session.skew, updatable=True)
+    return session.conn
+
+
+async def open_session_ex(transport: Transport, host: str, port: int, device_id: str, secret: bytes,
+                          own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
+                          connect_timeout: float | None = None) -> Session:
+    """Connect and authenticate (before the versions are compared, so a skewed device with the lane can still be updated)."""
     conn = await asyncio.wait_for(transport.connect(host, port), connect_timeout)
     try:
-        hello = await _hello(conn, own)
+        hello = await _read_hello(conn)
+        await conn.send(m.encode(m.hello(HA_ID, *own)))
+        skew = None
+        try:
+            m.negotiate(own[0], own[1], hello["proto"], hello["min_proto"])
+        except m.ProtocolError as e:
+            if not hello.get("lane"):
+                raise VersionSkew(e.data["peer"]) from None  # no lane: nothing to talk about
+            skew = e.data["peer"]
         if hello["device_id"] != device_id:
             raise AuthFailed("a different device answered at this address")
         if not hello.get("paired"):
@@ -119,7 +157,7 @@ async def open_session(transport: Transport, host: str, port: int, device_id: st
         if reply["type"] != "proof" or not auth.verify(secret, challenge["nonce"], nonce_h, auth.ROLE_DEVICE,
                                                        reply.get("proof")):
             raise AuthFailed("the device did not prove it knows the secret")
-        return conn
+        return Session(conn, hello, skew)
     except BaseException:
         await conn.close()
         raise
@@ -203,6 +241,9 @@ class DeckyClient:
     def __init__(self, transport: Transport, host: str, port: int, device_id: str, secret: bytes, *,
                  on_state: Callable[[str, dict], None], on_event: Callable[[str, dict], None],
                  on_connection: Callable[[bool], None], on_problem: Callable[[Exception], None] = lambda e: None,
+                 on_hello: Callable[[dict, str | None], None] = lambda hello, skew: None,
+                 on_update_status: Callable[[dict], None] = lambda frame: None,
+                 on_lane_closed: Callable[[], None] = lambda: None,
                  resolver: Callable[[], Awaitable[tuple[str, int] | None]] | None = None,
                  own: tuple[int, int] = (PROTOCOL_VERSION, MIN_PROTOCOL_VERSION),
                  sleep: Callable[[float], Awaitable] = asyncio.sleep, command_timeout: float = COMMAND_TIMEOUT,
@@ -211,7 +252,9 @@ class DeckyClient:
         self._device_id, self._secret = device_id, secret
         self._on_state, self._on_event, self._on_connection, self._on_problem = on_state, on_event, on_connection, on_problem
         self._resolver, self._own, self._sleep, self._command_timeout = resolver, own, sleep, command_timeout
+        self._on_hello, self._on_update_status, self._on_lane_closed = on_hello, on_update_status, on_lane_closed
         self._conn: Connection | None = None
+        self._lane: Connection | None = None   # authenticated but version-skewed: only update frames flow
         self._pending: dict[int, asyncio.Future] = {}
         self._next_id = 1
         self._task: asyncio.Task | None = None
@@ -273,6 +316,20 @@ class DeckyClient:
         if self._conn is None:   # while connected there is nothing to hurry
             self._wake.set()
 
+    @property
+    def lane_connected(self) -> bool:
+        return self._lane is not None
+
+    async def send_update(self, version: str, url: str, sha256: str) -> None:
+        """Ask the device to install a release (normal or lane connection). Progress arrives through `on_update_status`."""
+        conn = self._conn or self._lane
+        if conn is None:
+            raise DeviceOffline("the device is offline")
+        try:
+            await conn.send(m.encode(m.update(version, url, sha256)))
+        except (ConnectionClosed, OSError):
+            raise DeviceOffline("the device is offline") from None
+
     async def command(self, name: str, data: dict | None = None) -> dict:
         """Run a command on the device. Raises DeviceOffline at once when not connected, CommandError on a device error."""
         conn = self._conn
@@ -320,13 +377,25 @@ class DeckyClient:
             delay = None
             self._attempting = True
             try:
-                conn = await open_session(self._transport, self.host, self.port, self._device_id, self._secret, self._own,
-                                          PROBE_CONNECT_TIMEOUT)
-                self._conn = conn
-                self._boot_id, self._last_seq = None, {}
+                session = await open_session_ex(self._transport, self.host, self.port, self._device_id, self._secret,
+                                                self._own, PROBE_CONNECT_TIMEOUT)
+                conn = session.conn
                 self.failed_attempts = 0
-                self._on_connection(True)
-                await self._read_loop(conn)
+                self._on_hello(session.hello, session.skew)
+                if session.skew is not None:
+                    self._lane = conn
+                    self._on_problem(VersionSkew(session.skew, updatable=True))
+                    try:
+                        await self._lane_loop(conn)
+                    except (ConnectionClosed, OSError, asyncio.TimeoutError):
+                        pass
+                    # a restart for an update is expected: come back quickly; otherwise do not hammer the device
+                    delay = PROBE_FAST_SECONDS if self._update_running else VERSION_SKEW_DELAY
+                else:
+                    self._conn = conn
+                    self._boot_id, self._last_seq = None, {}
+                    self._on_connection(True)
+                    await self._read_loop(conn)
             except asyncio.CancelledError:
                 raise
             except AuthFailed as e:
@@ -341,6 +410,11 @@ class DeckyClient:
                 _LOGGER.exception("unexpected error in the device connection")
             finally:
                 self._attempting = False
+                if self._lane is not None:
+                    await self._lane.close()
+                    self._lane = None
+                    self._lost_at = lost_at = self._clock()
+                    self._on_lane_closed()
                 if self._conn is not None:
                     await self._conn.close()
                     self._conn = None
@@ -390,12 +464,27 @@ class DeckyClient:
         except (DeviceOffline, CommandError) as e:
             _LOGGER.debug("resync failed: %s", e)
 
+    _update_running = False  # the last update_status says an install is under way (then a closed lane is expected)
+
+    def _note_update_status(self, frame: dict) -> None:
+        self._update_running = frame["state"] in ("downloading", "waiting_for_ui", "installing")
+        self._on_update_status(frame)
+
+    async def _lane_loop(self, conn: Connection) -> None:
+        """A skewed connection: read update_status frames until the device closes it."""
+        while True:
+            frame = await _recv_frame(conn, None)
+            if frame["type"] == "update_status":
+                self._note_update_status(frame)
+
     async def _read_loop(self, conn: Connection) -> None:
         while True:
             frame = await _recv_frame(conn, None)
             kind = frame["type"]
             if kind == "state":
                 self._apply_state(frame)
+            elif kind == "update_status":
+                self._note_update_status(frame)
             elif kind == "event":
                 self._on_event(frame["name"], frame["data"])
             elif kind == "result":

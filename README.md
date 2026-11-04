@@ -12,6 +12,7 @@ Tested with Home Assistant 2026.10 and a Steam Machine running SteamOS.
 |---|---|
 | Media player (named after the device) | Turn on (Wake on LAN) and off (sleep, or shut down if you choose), pick an app or game as the source (the running app is closed first), play, pause, next and previous for the running app, volume and mute |
 | Desktop mode (switch) | On switches the device to the desktop session, off returns to game mode |
+| Plugin update (update) and Install plugin updates automatically (switch) | The plugin version on the device against the version of this integration, with an Install button; the switch (on by default) lets Home Assistant update the plugin on its own |
 | Restart device, Restart Steam (buttons) | Reboot the device, or restart the Steam client |
 | Connectivity (binary sensor) | Whether the device is online and awake |
 | Steam screen (sensor) | `game`, `steam_over_game`, `steam` or `desktop` |
