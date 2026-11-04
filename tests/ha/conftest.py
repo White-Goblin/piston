@@ -29,7 +29,8 @@ def auto_enable_custom_integrations(enable_custom_integrations):
     yield
 
 
-COMMANDS = ("launch", "quit", "power", "audio", "media_key", "toast", "pip_show", "pip_hide", "pip_signal", "set_sensor_interval")
+COMMANDS = ("launch", "quit", "power", "audio", "media_key", "toast", "pip_show", "pip_hide", "pip_signal", "set_sensor_interval",
+            "sendspin_enable")
 
 
 class FakeDevice:

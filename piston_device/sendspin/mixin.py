@@ -14,6 +14,7 @@ from .messages import client_id_for
 from .session import SendspinSession
 from .sink import PipeWireSink
 
+SLEEP_STOP_TIMEOUT_S = 2.5  # logind gives a delay inhibitor only a few seconds: leaving cleanly must fit in that
 SETTINGS_DEBOUNCE_S = 2.0  # Music Assistant raises the volume for an announcement and restores it: only the settled value is saved
 SETTING_KEYS = {"volume": "sendspin_volume", "muted": "sendspin_muted", "output_delay_ms": "sendspin_output_delay_ms"}
 
@@ -27,6 +28,7 @@ class SendspinMixin:
         self._sendspin_pending = {}
         self._sendspin_save_handle = None
         self._sendspin_lock = asyncio.Lock()
+        self.sendspin_asleep = False  # between the sleep announcement and the resume refresh the player stays down
 
     # --- state group -----------------------------------------------------------------------------------------------------------
 
@@ -76,6 +78,8 @@ class SendspinMixin:
         async with self._sendspin_lock:
             if not self._load_settings()["sendspin_enabled"]:
                 self._push_sendspin()
+                return False
+            if self.sendspin_asleep:
                 return False
             if self.sendspin_listener is not None:
                 return True
@@ -155,3 +159,30 @@ class SendspinMixin:
             await self._sendspin_start()
         except Exception as e:  # noqa: BLE001
             decky.logger.error(f"Sendspin failed to start: {e!r}")
+
+    # --- sleep, shutdown and wake ----------------------------------------------------------------------------------------------
+
+    async def _sendspin_sleep(self, reason: str) -> None:
+        """Called with the sleep/shutdown announcement: stop the stream, say goodbye, withdraw the record, within a short
+        deadline. Nothing is pushed (the device is going down); the resume refresh pushes the real status."""
+        self.sendspin_asleep = True
+        if self.sendspin_listener is None and self.sendspin_advertiser is None:
+            return
+        try:
+            await asyncio.wait_for(self._sendspin_stop(reason, push=False), SLEEP_STOP_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            decky.logger.warning("Sendspin did not stop in time for the sleep")
+        except Exception as e:  # noqa: BLE001
+            decky.logger.warning(f"Sendspin stop for the sleep failed: {e!r}")
+
+    async def _sendspin_wake(self) -> None:
+        """After the resume refresh (the network wait is done): start again from scratch. A connection that survived a
+        suspend nobody announced is closed first, and the mDNS record is rebuilt (the multicast membership is gone)."""
+        self.sendspin_asleep = False
+        try:
+            if self.sendspin_listener is not None:
+                await self._sendspin_stop("restart", push=False)
+            await self._sendspin_start()
+        except Exception as e:  # noqa: BLE001
+            decky.logger.error(f"Sendspin failed to start after the resume: {e!r}")
+        self._push_sendspin()

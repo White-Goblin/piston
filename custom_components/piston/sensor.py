@@ -22,6 +22,8 @@ async def async_setup_entry(hass, entry, async_add_entities):
         return {k: DeckySensor(coordinator, k) for k in keys if table.describe(k)}
 
     entry.async_on_unload(track_new_entities(coordinator, async_add_entities, build))
+    entry.async_on_unload(track_new_entities(coordinator, async_add_entities,
+                                             lambda: {"sendspin": SendspinStatusSensor(coordinator)} if coordinator.sendspin else {}))
     entry.async_on_unload(track_new_entities(coordinator, async_add_entities, lambda: {
         serial: ControllerBatterySensor(coordinator, serial, label)
         for serial, label in controller_labels(coordinator).items()}))
@@ -128,3 +130,33 @@ class PipStateSensor(DeckyEntity, SensorEntity):
     def extra_state_attributes(self) -> dict:
         pip = self.coordinator.groups.get("pip", {})
         return {"camera": pip.get("entity_id") or None, "message": pip.get("message") or None}
+
+
+SENDSPIN_STATES = ["disabled", "waiting", "connected", "streaming", "error"]
+
+
+class SendspinStatusSensor(DeckyEntity, SensorEntity):
+    """What the device's Sendspin player is doing: off, waiting for a server, connected, or streaming."""
+
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = SENDSPIN_STATES
+    _attr_translation_key = "sendspin_status"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator, "sendspin_status")
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.online and self.coordinator.sendspin is not None
+
+    @property
+    def native_value(self):
+        status = (self.coordinator.sendspin or {}).get("status")
+        return status if status in SENDSPIN_STATES else "error"  # a status this version does not know is shown as a problem
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        group = self.coordinator.sendspin or {}
+        return {"server_name": group.get("server_name"), "port": group.get("port"), "error": group.get("error"),
+                "player_name": group.get("name")}

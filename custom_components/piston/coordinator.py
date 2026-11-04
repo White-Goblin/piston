@@ -19,6 +19,10 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Groups that are live state: never restored from the Store, dropped when the device is not known to be awake
+LIVE_GROUPS = ("media", "sendspin")
+
+
 class DeckyCoordinator:
     """`power` is "on" (connected and awake), "standby" (announced sleep) or "off" (announced shutdown, or gone silently).
 
@@ -93,7 +97,7 @@ class DeckyCoordinator:
         Live data always wins: a group that is already live is left alone, and the first live frame of a restored
         group replaces it and clears its flag. The power state is not restored: it starts as off until connected."""
         for name, data in groups.items():
-            if name == "media":
+            if name in LIVE_GROUPS:
                 continue  # never restored (live state only)
             if name not in self.groups:
                 self.groups[name] = data
@@ -109,10 +113,21 @@ class DeckyCoordinator:
         self._notify()
 
     def _drop_media(self) -> None:
-        """What is playing is live state: it is never stored or restored, and is gone as soon as the device is not
-        known to be awake and connected (the next connection's snapshot brings it back)."""
-        self.groups.pop("media", None)
-        self.restored.discard("media")
+        """What is playing and the Sendspin player's status are live state: never stored or restored, and gone as soon as
+        the device is not known to be awake and connected (the next connection's snapshot brings them back)."""
+        for name in LIVE_GROUPS:
+            self.groups.pop(name, None)
+            self.restored.discard(name)
+
+    @property
+    def sendspin(self) -> dict | None:
+        """The Sendspin player's status group, or None when the device does not report one (an older plugin, or it is
+        asleep/off). Entities for it exist only for devices that report it."""
+        return self.groups.get("sendspin")
+
+    async def async_set_sendspin(self, enabled: bool) -> None:
+        """Turn the device's Sendspin player on or off (the device pushes the new status itself)."""
+        await self.async_command("sendspin_enable", {"enabled": bool(enabled)})
 
     def on_event(self, name: str, data: dict) -> None:
         if name == "going_to_sleep":

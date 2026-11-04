@@ -48,6 +48,9 @@ class ResumeMixin:
         finally:
             self._release_pushes(token, before)  # also when cancelled by another sleep: nothing stays held
         self._push_event("resumed")
+        hook = getattr(self, "_sendspin_wake", None)
+        if hook is not None:
+            self._sendspin_wake_task = asyncio.get_running_loop().create_task(hook())  # in the background: HA is not kept waiting
         if not self._app_sync_ok:
             # The Steam UI was not ready: push what is known (done) and keep asking for a while, in the background
             self._app_task = asyncio.get_running_loop().create_task(self._retry_app_sync())

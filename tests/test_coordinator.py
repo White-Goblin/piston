@@ -48,6 +48,32 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.coord.groups["device"]["name"], "Box")
         self.assertEqual((self.coord.power, self.notified), ("on", before + 1))
 
+    async def test_the_sendspin_group_is_exposed_and_dropped_with_the_other_live_state(self):
+        self.assertIsNone(self.coord.sendspin)                        # an older plugin, or nothing yet
+        self.coord.on_connection(True)
+        group = {"enabled": True, "status": "connected", "name": "Box", "port": 8928, "server_name": "Music Assistant"}
+        self.coord.on_state("sendspin", group)
+        self.assertEqual(self.coord.sendspin, group)
+        self.coord.on_event("going_to_sleep", {"reason": "suspend"})  # live state: gone as soon as the device may be asleep
+        self.assertIsNone(self.coord.sendspin)
+
+    async def test_the_sendspin_group_is_never_restored(self):
+        self.coord.restore({"sendspin": {"enabled": True, "status": "streaming", "name": "Box"}, "audio": {"mode": "cec"}}, None)
+        self.assertIsNone(self.coord.sendspin)
+        self.assertIn("audio", self.coord.groups)
+
+    async def test_set_sendspin_runs_the_device_command(self):
+        self.coord.client = mock.Mock(command=mock.AsyncMock(return_value={}))
+        await self.coord.async_set_sendspin(False)
+        await self.coord.async_set_sendspin(True)
+        self.assertEqual(self.coord.client.command.await_args_list,
+                         [mock.call("sendspin_enable", {"enabled": False}), mock.call("sendspin_enable", {"enabled": True})])
+
+    async def test_set_sendspin_while_offline_raises_device_offline(self):
+        self.coord.client = None
+        with self.assertRaises(c.DeviceOffline):
+            await self.coord.async_set_sendspin(True)
+
     async def test_connect_disconnect_marks_entities_and_connectivity(self):
         sensor = ConnectivitySensor(self.coord)
         self.coord.on_connection(True)

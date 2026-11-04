@@ -21,6 +21,7 @@ Requires Home Assistant 2026.10 or newer (the version it was developed and teste
 | CPU temperature, GPU temperature, Fan speed, CPU load, GPU load, Memory used, Disk used, Uptime, IP address, Wi-Fi signal, Battery | System sensors; only the ones your device has are created |
 | Controller battery and charging | One pair per controller the device has seen; unavailable while the controller is off |
 | Toast (notify) and Toast click (event) | Show a Steam notification; fires when someone clicks it |
+| Sendspin player (switch) and Sendspin status (sensor) | Turn the device's Sendspin player on or off (on by default). It lets Music Assistant, and Home Assistant text to speech through Music Assistant, play audio on the device in the background, mixed with games and apps. The status shows `disabled`, `waiting`, `connected`, `streaming` or `error`. Only devices whose plugin has the player get these two |
 | PiP camera (select) and PiP state (sensor) | Show a camera over whatever is on screen (including a running game); choose Off to hide it |
 
 Actions (Developer tools, automations and scripts):

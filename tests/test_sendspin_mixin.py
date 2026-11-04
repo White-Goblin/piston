@@ -3,7 +3,7 @@ import unittest
 from unittest import mock
 
 from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir
-from piston_device import advertise
+from piston_device import advertise, resume as resume_module
 from piston_device.proto import messages as m
 from piston_device.sendspin import crypto, mixin as sendspin_mixin
 from piston_device.sendspin.sink import FakeSink
@@ -237,6 +237,131 @@ class AdvertisingTests(PluginCase):
         self.assertEqual(low.args[5], {"path": "/sendspin", "name": self.group()["name"]})
         await self.plugin._sendspin_stop()
         self.assertTrue(low.stopped)
+
+
+class SleepTests(PluginCase):
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.network = mock.AsyncMock(return_value=True)
+        for p in (mock.patch.object(resume_module, "wait_for_network", self.network), mock.patch.object(resume_module, "APP_SYNC_FIRST_WAIT", 0.02),
+                  mock.patch.object(resume_module, "APP_SYNC_WINDOW", 0.1), mock.patch.object(resume_module, "APP_SYNC_RETRY", 0.02)):
+            p.start()
+            self.addCleanup(p.stop)
+        self.events = []
+
+    async def boot(self, **settings):
+        await super().boot(**settings)
+        real = self.plugin.server.push_event
+        self.plugin.server.push_event = lambda name, data=None: (self.events.append(name), real(name, data))[0]
+
+    async def connect_server(self):
+        peer = FakeServer()
+        await peer.connect(self.plugin.sendspin_listener.port)
+        await peer.handshake()
+        await peer.hello_and_activate()
+        peer.start_pump()
+        self.addCleanup(peer.close)
+        await self.until(lambda: self.group()["status"] == "connected")
+        return peer
+
+    async def wake(self):
+        await self.plugin._announce_resume()
+        await self.plugin._sendspin_wake_task
+
+    async def test_the_sleep_announcement_stops_the_player_and_says_goodbye(self):
+        await self.boot()
+        peer = await self.connect_server()
+        port = self.plugin.sendspin_listener.port
+        advertiser = self.plugin.sendspin_advertiser
+        with mock.patch.object(advertiser, "stop", wraps=advertiser.stop) as withdrawn:
+            await self.plugin._announce_sleep()
+        withdrawn.assert_awaited()
+        self.assertEqual(await peer.next("client/goodbye"), ("client/goodbye", {"reason": "shutdown"}))
+        self.assertIsNone(self.plugin.sendspin_listener)
+        self.assertEqual(self.events, ["going_to_sleep"])
+        with self.assertRaises(OSError):
+            await asyncio.open_connection("127.0.0.1", port)
+
+    async def test_the_shutdown_announcement_passes_the_reason_on(self):
+        await self.boot()
+        peer = await self.connect_server()
+        await self.plugin._announce_shutdown("restart")
+        self.assertEqual(await peer.next("client/goodbye"), ("client/goodbye", {"reason": "restart"}))
+        self.assertEqual(self.events, ["shutting_down"])
+
+    async def test_a_player_that_cannot_stop_in_time_does_not_hold_up_the_sleep(self):
+        await self.boot()
+
+        async def hang(*a, **k):
+            await asyncio.sleep(30)
+        with mock.patch.object(sendspin_mixin, "SLEEP_STOP_TIMEOUT_S", 0.05), mock.patch.object(main.Plugin, "_sendspin_stop", hang):
+            await asyncio.wait_for(self.plugin._announce_sleep(), 2)
+        self.assertEqual(self.events, ["going_to_sleep"])
+
+    async def test_a_player_that_fails_to_stop_does_not_break_the_sleep(self):
+        await self.boot()
+        with mock.patch.object(main.Plugin, "_sendspin_stop", mock.AsyncMock(side_effect=RuntimeError("boom"))):
+            await self.plugin._announce_sleep()
+        self.assertEqual(self.events, ["going_to_sleep"])
+
+    async def test_resume_starts_the_player_again_and_a_server_can_connect(self):
+        await self.boot()
+        await self.plugin._announce_sleep()
+        self.assertIsNone(self.plugin.sendspin_listener)
+        await self.wake()
+        self.assertIsNotNone(self.plugin.sendspin_listener)
+        self.assertEqual(self.group()["status"], "waiting")
+        self.assertEqual(self.events, ["going_to_sleep", "resumed"])
+        await self.connect_server()
+        self.network.assert_awaited()
+
+    async def test_resume_without_a_network_still_starts_the_player(self):
+        await self.boot()
+        await self.plugin._announce_sleep()
+        self.network.return_value = False
+        await self.wake()
+        self.assertIsNotNone(self.plugin.sendspin_listener)         # the advertiser keeps trying until the address is there
+
+    async def test_the_resumed_event_does_not_wait_for_the_player(self):
+        await self.boot()
+        await self.plugin._announce_sleep()
+        gate = asyncio.Event()
+        real = main.Plugin._sendspin_start
+
+        async def slow(self_):
+            await gate.wait()
+            return await real(self_)
+        with mock.patch.object(main.Plugin, "_sendspin_start", slow):
+            await self.plugin._announce_resume()
+            self.assertIn("resumed", self.events)
+            self.assertIsNone(self.plugin.sendspin_listener)
+            gate.set()
+            await self.plugin._sendspin_wake_task
+        self.assertIsNotNone(self.plugin.sendspin_listener)
+
+    async def test_a_suspend_nobody_announced_still_ends_with_a_fresh_player(self):
+        await self.boot()
+        peer = await self.connect_server()
+        old = self.plugin.sendspin_listener
+        await self.wake()                                              # resume with no sleep announcement before it
+        self.assertEqual(await peer.next("client/goodbye"), ("client/goodbye", {"reason": "restart"}))
+        self.assertIsNotNone(self.plugin.sendspin_listener)
+        self.assertIsNot(self.plugin.sendspin_listener, old)
+
+    async def test_the_player_cannot_be_started_while_the_device_is_going_to_sleep(self):
+        await self.boot()
+        await self.plugin._announce_sleep()
+        await self.plugin._cmd_sendspin_enable({"enabled": True})
+        self.assertIsNone(self.plugin.sendspin_listener)
+        await self.wake()
+        self.assertIsNotNone(self.plugin.sendspin_listener)
+
+    async def test_a_disabled_player_stays_down_through_sleep_and_resume(self):
+        await self.boot(sendspin_enabled=False)
+        await self.plugin._announce_sleep()
+        await self.wake()
+        self.assertIsNone(self.plugin.sendspin_listener)
+        self.assertEqual(self.group()["status"], "disabled")
 
 
 if __name__ == "__main__":

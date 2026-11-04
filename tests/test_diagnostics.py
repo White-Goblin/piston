@@ -27,6 +27,22 @@ def populated():
     return coord
 
 
+class SendspinDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_sendspin_status_is_included_and_addresses_in_its_error_are_removed(self):
+        coord = populated()
+        coord.on_state("sendspin", {"enabled": True, "status": "error", "name": "Box", "port": 8928, "server_name": "Music Assistant",
+                                    "error": f"cannot reach {HOST}"})
+        report = await async_get_config_entry_diagnostics(None, coord.entry)
+        group = report["groups"]["sendspin"]
+        self.assertEqual((group["status"], group["port"], group["server_name"]), ("error", 8928, "Music Assistant"))
+        self.assertNotIn(HOST, json.dumps(report))
+        self.assertIn("**IP**", group["error"])
+
+    async def test_an_older_device_has_no_sendspin_section(self):
+        report = await async_get_config_entry_diagnostics(None, populated().entry)
+        self.assertNotIn("sendspin", report["groups"])
+
+
 class MediaDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
     async def test_the_media_group_shows_its_shape_but_not_what_is_watched(self):
         coord = populated()

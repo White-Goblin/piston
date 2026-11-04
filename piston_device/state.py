@@ -105,13 +105,21 @@ class StateMixin:
 
     async def _announce_sleep(self) -> None:
         self._push_event("going_to_sleep", {"reason": "suspend"})
-        if self.server is not None:
-            await self.server.flush()
+        await asyncio.gather(self._flush_server(), self._sendspin_going_down("shutdown"))
 
     async def _announce_shutdown(self, reason: str) -> None:
         self._push_event("shutting_down", {"reason": reason})
+        await asyncio.gather(self._flush_server(), self._sendspin_going_down(reason))
+
+    async def _flush_server(self) -> None:
         if self.server is not None:
             await self.server.flush()
+
+    async def _sendspin_going_down(self, reason: str) -> None:
+        """Let the Sendspin player leave cleanly while the announcement is flushed (never delays or breaks the sleep)."""
+        hook = getattr(self, "_sendspin_sleep", None)
+        if hook is not None:
+            await hook(reason)
 
     async def _device_group(self) -> dict:
         """Identity, network and Wake on LAN facts the integration needs while the device is awake."""
