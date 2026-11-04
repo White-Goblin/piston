@@ -121,12 +121,41 @@ class PipeWireSinkTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(proc.args[proc.args.index(flag) + 1], value)
         self.assertEqual(proc.args[-1], "-")
         self.assertIn("application.name=Piston", " ".join(proc.args))
-        self.assertEqual(len(proc.stdin.data), 960 * 4)   # 20 ms of silence to make the stream appear
+        self.assertGreaterEqual(len(proc.stdin.data), 960 * 4)   # silence flows while the stream is set up
         self.assertEqual(set(proc.stdin.data), {0})
         self.assertEqual(proc.kwargs["env"]["XDG_RUNTIME_DIR"], sk.RUNTIME_DIR)
         self.assertEqual(env.sets(), [("set-sink-input-volume", "40", "55%"), ("set-sink-input-mute", "40", "1")])
         self.assertTrue(s.alive)
         self.assertIsNone(s.error)
+
+    async def test_silence_keeps_flowing_while_the_stream_is_found_and_stops_when_open_returns(self):
+        # pw-cat blocks on an empty pipe and then cannot answer pactl: the sink must feed it while it waits for the stream
+        env = Env()
+        polls = {"n": 0}
+        real = env.pactl
+
+        async def slow_to_appear(*args):
+            if args[:2] == ("-f", "json"):
+                polls["n"] += 1
+                if polls["n"] < 6:
+                    return "[]"
+            return await real(*args)
+        s = PipeWireSink(spawn=env.spawn, pactl=slow_to_appear, clock=env.clock, sleep=env.sleep)
+        await s.open(48000)
+        proc = env.procs[0]
+        fed = len(proc.stdin.data)
+        self.assertGreater(fed, 3 * 960 * 4)                       # several chunks went in while waiting
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(proc.stdin.data), fed)                # and the feeder is gone once open() has returned
+
+    async def test_a_feeder_does_not_outlive_a_failed_open(self):
+        env = Env(appear=False)
+        s = env.sink()
+        with self.assertRaises(SinkError):
+            await s.open(48000)
+        size = len(env.procs[0].stdin.data)
+        await asyncio.sleep(0.05)
+        self.assertEqual(len(env.procs[0].stdin.data), size)
 
     async def test_volume_and_mute_changes_reach_the_running_stream(self):
         env = Env()

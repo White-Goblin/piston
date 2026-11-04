@@ -60,7 +60,7 @@ class StartTests(PluginCase):
         g = self.group()
         self.assertEqual((g["enabled"], g["status"]), (True, "waiting"))
         self.assertGreater(g["port"], 0)
-        self.assertEqual(g["name"], self.plugin._load_settings()["device_name"][:64])
+        self.assertEqual(g["name"], f'{self.plugin._load_settings()["device_name"]} audio')
         self.assertIsNotNone(self.plugin.sendspin_listener)
         self.assertEqual(self.plugin.sendspin_listener.port, g["port"])
 
@@ -212,7 +212,7 @@ class ConnectionTests(PluginCase):
         with mock.patch.object(sendspin_mixin, "PipeWireSink", lambda **kw: made.append(kw) or FakeSink()):
             await self.connect_server()
             await self.until(lambda: made)
-        self.assertEqual(made, [{"volume": 33, "muted": True}])
+        self.assertEqual([{k: v for k, v in kw.items() if k != "log"} for kw in made], [{"volume": 33, "muted": True}])
 
 
 class AdvertisingTests(PluginCase):

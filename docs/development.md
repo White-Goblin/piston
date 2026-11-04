@@ -38,3 +38,9 @@ Do not use Valve's or Home Assistant's own artwork.
 ## Conventions
 
 Wording stays hardware agnostic ("device", not a specific model) and nothing hard-codes a screen size. Keep the README entity and action tables in step with the code (a test checks that every entity, action and option name appears).
+
+## Sendspin player
+
+Code in `piston_device/sendspin/`: `crypto.py` (X25519 and ChaCha20-Poly1305 through `ctypes` over the system `libcrypto`, checked with RFC test vectors at start; the plugin has no dependencies), `noise.py` (Noise KKpsk2, checked against transcripts from the `noiseprotocol` package in `tests/sendspin_noise_vectors.py`), `messages.py`, `clock.py` (the specification's time filter), `scheduler.py`, `sink.py` (a `pw-cat` stream), `session.py`, `listener.py` and `mixin.py`. The tests use a scripted server (`tests/sendspin_peer.py`) over a real loopback websocket and a fake audio sink, so they need neither PipeWire nor a network.
+
+To try it against a real Music Assistant without the device, run the listener from a script on a development machine, or run the reference player with `uvx --from sendspin sendspin daemon` to see what a well-behaved player looks like. Volume and mute set by Music Assistant are saved after two quiet seconds, because announcements raise and restore the volume.

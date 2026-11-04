@@ -70,6 +70,15 @@ When a connection ends the integration keeps trying to reconnect: every 5 second
 
 The player page runs in a Steam browser view and holds no Home Assistant credential. It long-polls the plugin on loopback (`/pip/events`, `/pip/send`, protected by a per-run nonce); the plugin forwards its messages to the integration as `pip_signal` events and queues the integration's `pip_signal` commands for it. The integration calls the camera entity's WebRTC handlers (offer, candidates) or builds an HLS stream URL. The video itself flows directly between Home Assistant and the device.
 
+## Sendspin player
+
+The plugin can also run a Sendspin player for Music Assistant. That is a separate protocol on its own port (default 8928, mDNS `_sendspin._tcp`, Noise-encrypted websocket, player role, PCM); the integration is not involved in the audio. The Piston protocol only carries its status and its enable setting, and needs no version change because both are additive:
+
+- State group `sendspin`: `{enabled, status, name, port?, server_name?, error?}` with `status` one of `disabled`, `waiting`, `connected`, `streaming`, `error`. It is live state: the integration does not store or restore it, drops it when the device announces a sleep, and creates its switch and sensor only for devices that report it.
+- Command `sendspin_enable {enabled}` turns the player on or off and persists the setting on the device; bad data is `bad_request`. The integration sends it only to devices that reported the group.
+
+An older integration ignores the group (unknown groups are kept and harmless), and an older plugin never reports it, so every combination keeps working.
+
 ## Updating the plugin
 
 From release 0.4.0 the integration keeps the plugin on the device at the version of the integration itself (the version in its manifest). Every release so far changed the protocol, and a device with a different protocol version used to be closed at `hello` before anything could be said to it, so the handshake is now **frozen**: the device `hello` (with `plugin_version` and `lane`), the `challenge`/`proof` exchange and the close codes keep their shape in every later release, and the device authenticates a paired peer *before* it compares protocol versions.

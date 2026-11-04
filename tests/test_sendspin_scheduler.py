@@ -116,6 +116,48 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(f.s.clear(from_ts_us=f.server(f.t + 3_000_000 + 2 * 20_000)), [])
         self.assertEqual(f.s.queued_bytes, 2 * len(CHUNK))
 
+    def test_keepalive_fills_with_silence_up_to_the_release_window_and_advances_the_cursor(self):
+        f = Fixture()
+        actions = f.s.keepalive()                                     # nothing queued: fill to now + latency + lookahead
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].frames, round(100_000 * RATE / 1e6))
+        self.assertAlmostEqual(f.s.cursor_us, f.t + 50_000 + 100_000, delta=1)
+        self.assertEqual(f.s.keepalive(), [])                         # already full
+        f.t += 40_000
+        again = f.s.keepalive()
+        self.assertEqual(again[0].frames, round(40_000 * RATE / 1e6))
+
+    def test_keepalive_never_goes_past_the_next_chunks_play_time(self):
+        f = Fixture()
+        target = f.t + 110_000                                        # inside the window: 60 ms after the earliest sample
+        f.s.submit(f.server(target), CHUNK)
+        (silence,) = f.s.keepalive()
+        self.assertEqual(silence.frames, round(60_000 * RATE / 1e6))
+        f.t += 5_000
+        released = f.s.poll()                                         # the chunk is due: no gap, no trimming
+        self.assertEqual([type(a) for a in released], [Write])
+        self.assertAlmostEqual(released[0].at_us, target, delta=2)
+
+    def test_the_first_chunk_after_keepalive_plays_in_sync(self):
+        f = Fixture()
+        target = f.t + 400_000
+        f.s.submit(f.server(target), CHUNK)
+        total = 0
+        while f.s.next_due_in_us() > 0:
+            f.t += 10_000
+            total += sum(a.frames for a in f.s.keepalive())
+        writes = [a for a in f.s.poll() if isinstance(a, Write)]
+        self.assertEqual(len(writes), 1)
+        self.assertAlmostEqual(writes[0].at_us, target, delta=5_000)   # within the tolerance
+        self.assertGreater(total, 0)
+
+    def test_keepalive_after_the_stream_ran_dry_restarts_from_the_earliest_possible_time(self):
+        f = Fixture()
+        f.s.keepalive()
+        f.t += 2_000_000                                              # nothing polled for two seconds
+        (silence,) = f.s.keepalive()
+        self.assertEqual(silence.frames, round(100_000 * RATE / 1e6))
+
     def test_output_delay_moves_the_play_time_earlier(self):
         f = Fixture()
         f.s.output_delay_us = 30_000

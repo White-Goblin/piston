@@ -196,7 +196,17 @@ class StreamTests(SessionTestCase):
         await h.peer.send("stream/clear", {"server_transmitted": h.peer.server_now()})
         await h.wait_for(lambda: h.sessions[0].scheduler.queued_bytes == 0)
         self.assertIn(("flush",), h.sink.events)
-        self.assertEqual(h.sink.written, b"")
+        self.assertTrue(set(h.sink.written) <= {0})                           # at most the keepalive silence, none of the queued audio
+
+    async def test_silence_keeps_flowing_while_the_first_chunk_is_far_away_and_the_chunk_then_plays_on_time(self):
+        h = await self.harness()
+        base = await self.play(h, n=3, lead_us=700_000)
+        await h.wait_for(lambda: h.sink.written.endswith(CHUNK * 3), timeout=4)
+        silence = h.sink.written[:-3 * len(CHUNK)]
+        self.assertTrue(set(silence) <= {0})
+        # about 700 ms of lead-in, written as it went (not one block), so pw-cat never starved
+        self.assertGreater(len(silence) / 4 / 48000, 0.4)
+        self.assertGreater(len([e for e in h.sink.events if e[0] == "write"]), 5)
 
     async def test_a_new_stream_start_with_another_format_reopens_the_sink(self):
         h = await self.harness()
@@ -210,7 +220,7 @@ class StreamTests(SessionTestCase):
         h = await self.harness()
         await self.play(h, n=3, start_stream=False)
         await asyncio.sleep(0.2)
-        self.assertEqual(h.sink.written, b"")
+        self.assertEqual(h.sink.written, b"")                                  # no stream, so not even keepalive silence
         self.assertEqual(h.sessions[0].scheduler.queued_bytes, 0)
 
     async def test_an_unsupported_format_ends_the_session(self):
@@ -230,11 +240,31 @@ class StreamTests(SessionTestCase):
         self.assertFalse(h.sessions[0].streaming)
         self.assertFalse(h.finished.is_set())
 
+    async def test_a_sink_that_fails_to_open_once_or_twice_is_retried(self):
+        h = await self.harness()
+        h.sink.fail_open_times = 2
+        with mock.patch.object(sess, "OPEN_RETRY_S", 0.01):
+            await h.connect()
+            await h.wait_for(lambda: h.sessions[0].clock.converged)
+            await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
+            await h.wait_for(lambda: h.sessions[0].streaming)
+        self.assertEqual(h.statuses[-1][0], "streaming")
+        self.assertEqual(len([e for e in h.sink.events if e[0] == "open"]), 1)
+
+    async def test_a_sink_that_never_opens_is_given_up_after_the_attempts(self):
+        h = await self.harness()
+        h.sink.fail_open_times = 99
+        with mock.patch.object(sess, "OPEN_RETRY_S", 0.01):
+            await h.connect()
+            await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
+            await h.wait_for(lambda: h.statuses and h.statuses[-1][0] == "error")
+        self.assertEqual(h.sink.fail_open_times, 99 - sess.OPEN_ATTEMPTS)
+
     async def test_late_audio_is_dropped_and_counted(self):
         h = await self.harness()
         await self.play(h, n=3, lead_us=-2_000_000)                             # two seconds in the past
         await h.wait_for(lambda: h.sessions[0].dropped_frames >= 3 * 960)
-        self.assertEqual(h.sink.written, b"")
+        self.assertTrue(set(h.sink.written) <= {0})                           # nothing audible was played
 
 
 class CommandTests(SessionTestCase):

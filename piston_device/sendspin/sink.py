@@ -4,7 +4,11 @@ Why a stream of its own (swe/notes/sendspin/spike-results.md): it is an ordinary
 app and system audio, follows the default output (HDMI, headphones, CEC) and has a volume independent of the system
 volume. Measured on the device: `--raw` is needed for headerless PCM, and the `--volume` flag does not show up in the
 stream, so the level is applied through `pactl` once the stream exists. To keep a stream from starting loud, `open()`
-primes it with silence and returns only after the level and mute are applied.
+feeds it silence and returns only after the level and mute are applied.
+
+Important (found on the device): `pw-cat` reads stdin on its realtime data thread, and `pactl set-sink-input-*` needs that
+thread to answer. While the pipe is empty the thread is blocked in read() and the command hangs until audio arrives, so
+while the stream is opening (and, via the scheduler's keepalive, whenever nothing is due) silence keeps flowing.
 
 The `Sink` interface is what the session uses; `FakeSink` records calls for tests."""
 import asyncio
@@ -13,12 +17,13 @@ import os
 import time
 
 LATENCY_US = 50_000  # requested stream latency; the scheduler assumes this much between a write and the sound
-NODE_WAIT_S = 2.0
+NODE_WAIT_S = 6.0  # generous: the first start after a wake or a plugin restart can be slow (seen on the device)
 NODE_POLL_S = 0.05
-PACTL_TIMEOUT_S = 3.0
+PACTL_TIMEOUT_S = 8.0
 RESTART_BACKOFF_S = (0.5, 1, 2, 5, 10)
 RUNTIME_DIR = f"/run/user/{os.getuid()}" if os.getuid() else "/run/user/1000"
 SILENCE_CHUNK_MS = 20
+FEED_INTERVAL_S = 0.02
 
 
 class SinkError(Exception):
@@ -75,6 +80,7 @@ class FakeSink(Sink):
         self.volume, self.muted = 50, False
         self.opened = False
         self.fail_open = False
+        self.fail_open_times = 0  # fail this many opens, then work
         self.accept_writes = True
         self.error = None
 
@@ -87,7 +93,8 @@ class FakeSink(Sink):
         return b"".join(e[1] for e in self.events if e[0] == "write")
 
     async def open(self, rate, channels=2, bits=16):
-        if self.fail_open:
+        if self.fail_open or self.fail_open_times > 0:
+            self.fail_open_times = max(0, self.fail_open_times - 1)
             raise SinkError("fake open failure")
         self.opened = True
         self.format = (rate, channels, bits)
@@ -129,8 +136,10 @@ async def _run_pactl(*args: str) -> str:
     try:
         proc = await asyncio.create_subprocess_exec("pactl", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
         out, err = await asyncio.wait_for(proc.communicate(), PACTL_TIMEOUT_S)
-    except (OSError, asyncio.TimeoutError) as e:
-        raise SinkError(f"pactl failed: {e or 'timed out'}") from None
+    except asyncio.TimeoutError:
+        raise SinkError(f"pactl {' '.join(args[:3])} timed out after {PACTL_TIMEOUT_S:g} s") from None
+    except OSError as e:
+        raise SinkError(f"pactl could not run: {type(e).__name__}: {e}") from None
     if proc.returncode != 0:
         raise SinkError(f"pactl exited with {proc.returncode}: {err.decode(errors='replace').strip()[:200]}")
     return out.decode()
@@ -141,8 +150,10 @@ async def _spawn(*args, **kwargs):
 
 
 class PipeWireSink(Sink):
-    def __init__(self, spawn=_spawn, pactl=_run_pactl, clock=time.monotonic, sleep=asyncio.sleep, volume: int = 50, muted: bool = False):
-        self._spawn, self._pactl, self._clock, self._sleep = spawn, pactl, clock, sleep
+    def __init__(self, spawn=_spawn, pactl=_run_pactl, clock=time.monotonic, sleep=asyncio.sleep, volume: int = 50, muted: bool = False,
+                 log=lambda message: None):
+        self._spawn, self._raw_pactl, self._clock, self._sleep = spawn, pactl, clock, sleep
+        self._log = log
         self._volume, self._muted = volume, muted
         self._proc = None
         self._format = None
@@ -154,6 +165,18 @@ class PipeWireSink(Sink):
         self._next_restart = 0.0
         self._env = {**os.environ, "XDG_RUNTIME_DIR": RUNTIME_DIR}
         self.error = None
+
+    async def _pactl(self, *args: str) -> str:
+        """Run pactl; a call that is slow (over half a second) or fails is logged with its time, to diagnose the device."""
+        started = self._clock()
+        try:
+            out = await self._raw_pactl(*args)
+        except SinkError as e:
+            self._log(f"sendspin: pactl {' '.join(args[:3])} failed after {self._clock() - started:.2f} s: {e}")
+            raise
+        if self._clock() - started > 0.5:
+            self._log(f"sendspin: pactl {' '.join(args[:3])} was slow: {self._clock() - started:.2f} s")
+        return out
 
     @property
     def alive(self) -> bool:
@@ -188,16 +211,38 @@ class PipeWireSink(Sink):
             raise SinkError(self.error) from None
         self._last_start = self._clock()
         try:
-            self._proc.stdin.write(bytes(self._frame_bytes * rate * SILENCE_CHUNK_MS // 1000))  # makes the stream appear
-            await self._proc.stdin.drain()
+            self._proc.stdin.write(bytes(self._frame_bytes * rate * SILENCE_CHUNK_MS // 1000))  # the stream appears with its first data
+        except OSError:
+            pass  # a process that died at once is reported by _find_stream
+        feeder = asyncio.create_task(self._feed_silence(self._proc))  # see the module note: pactl needs audio to be flowing
+        try:
             await self._find_stream()
             await self._apply()
         except (SinkError, OSError) as e:
             reason = str(e) if isinstance(e, SinkError) else await self._exit_reason() if not self.alive else str(e)
+            await self._stop_feeder(feeder)
             await self._kill()
             self.error = reason or "audio stream did not start"
             raise SinkError(self.error) from None
+        await self._stop_feeder(feeder)
         self.error = None
+
+    async def _feed_silence(self, proc) -> None:
+        """Real-time silence into a stream that is being set up; ends when cancelled or the pipe breaks."""
+        chunk = bytes(self._frame_bytes * self._format[0] * SILENCE_CHUNK_MS // 1000)
+        try:
+            while proc.returncode is None:
+                proc.stdin.write(chunk)
+                await proc.stdin.drain()
+                await self._sleep(FEED_INTERVAL_S)
+                await asyncio.sleep(0)  # always let other tasks run, whatever the injected sleep does
+        except (OSError, asyncio.CancelledError):
+            pass
+
+    @staticmethod
+    async def _stop_feeder(feeder) -> None:
+        feeder.cancel()
+        await asyncio.gather(feeder, return_exceptions=True)
 
     async def _find_stream(self) -> None:
         deadline = self._clock() + NODE_WAIT_S
@@ -214,6 +259,7 @@ class PipeWireSink(Sink):
             if self._clock() >= deadline:
                 raise SinkError("the audio stream did not appear")
             await self._sleep(NODE_POLL_S)
+            await asyncio.sleep(0)  # let the silence feeder run whatever the injected sleep does
 
     async def _apply(self) -> None:
         await self._pactl("set-sink-input-volume", str(self._index), f"{pulse_percent(self._volume)}%")

@@ -29,6 +29,8 @@ BUFFER_CAPACITY = 4_000_000
 REQUIRED_LEAD_TIME_MS = 250  # TODO(verify) with Music Assistant
 PLAYER_ROLE = "player@v1"
 POLL_INTERVAL_S = 0.01
+OPEN_ATTEMPTS = 3  # the audio output can be slow to come up right after a wake; the server will not ask again
+OPEN_RETRY_S = 0.5
 
 
 def monotonic_us() -> int:
@@ -251,13 +253,17 @@ class SendspinSession:
 
     async def _start_stream(self, fmt: dict) -> None:
         self.scheduler.set_format(fmt["sample_rate"], fmt["channels"] * fmt["bit_depth"] // 8)
-        try:
-            await self.sink.open(fmt["sample_rate"], fmt["channels"], fmt["bit_depth"])
-        except SinkError as e:
-            self.streaming = False
-            self._log(f"sendspin: audio output failed: {e}")
-            self._on_status("error", server_name=self.server_name, error=str(e))
-            return
+        for attempt in range(1, OPEN_ATTEMPTS + 1):
+            try:
+                await self.sink.open(fmt["sample_rate"], fmt["channels"], fmt["bit_depth"])
+                break
+            except SinkError as e:
+                self._log(f"sendspin: audio output failed (attempt {attempt} of {OPEN_ATTEMPTS}): {e}")
+                if attempt == OPEN_ATTEMPTS:
+                    self.streaming = False
+                    self._on_status("error", server_name=self.server_name, error=str(e))
+                    return
+                await asyncio.sleep(OPEN_RETRY_S)
         self.streaming, self.format = True, fmt
         self._on_status("streaming", server_name=self.server_name)
         await self._send_state()
@@ -350,6 +356,7 @@ class SendspinSession:
             if self.streaming:
                 try:
                     await self._apply_actions(self.scheduler.poll())
+                    await self._apply_actions(self.scheduler.keepalive())
                 except SinkError as e:
                     self._log(f"sendspin: audio output error: {e}")
                     self._on_status("error", server_name=self.server_name, error=str(e))

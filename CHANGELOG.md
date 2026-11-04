@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3.
+
+### Added
+- **Sendspin player.** The device is now a speaker for Music Assistant: music and text-to-speech announcements play through the device's audio output, mixed with the game, the apps and the system sounds. It has its own volume and mute (remembered across restarts) that do not touch the system or CEC volume. Music Assistant creates the media player for it in Home Assistant (named "<device name> audio"); Piston adds a **Sendspin player** switch and a **Sendspin status** sensor. See the README section "Sendspin player".
+- The player is on by default and accepts unauthenticated Sendspin sessions, so any computer on the network can play audio on the device. Turn the switch off if you do not want that. Pairing is not supported yet.
+- It listens on TCP port 8928 (the next free port if taken), says goodbye and stops advertising before a sleep or shutdown, and starts again after a wake.
+
+### Notes
+- PCM only for now (no FLAC or Opus), and no ducking of the game's sound during an announcement.
+- The plugin uses the device's own OpenSSL through `ctypes`; it still has no dependencies to install.
+
 ## 0.5.0
 
 **Piston: media and control for SteamOS devices in your living room.** A Home Assistant integration plus a small Decky Loader plugin that pushes commands from Home Assistant to the box under the TV (a Steam Deck, a Steam Machine or any other Decky Loader device).

@@ -67,7 +67,7 @@ class SendspinMixin:
 
     def _make_sendspin_session(self, reader, writer, *, admit, on_status):
         settings = self._load_settings()
-        sink = PipeWireSink(volume=settings["sendspin_volume"], muted=settings["sendspin_muted"])  # one per session: a displaced
+        sink = PipeWireSink(volume=settings["sendspin_volume"], muted=settings["sendspin_muted"], log=decky.logger.info)  # one per session: a displaced
         return SendspinSession(                                                                       # session must not close the new one's
             reader, writer, private_key=self._sendspin_private_key(), name=self._sendspin_name(), sink=sink,
             volume=settings["sendspin_volume"], muted=settings["sendspin_muted"], output_delay_ms=settings["sendspin_output_delay_ms"],

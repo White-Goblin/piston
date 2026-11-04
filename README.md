@@ -66,6 +66,37 @@ Settings > Devices & services > Piston > Configure:
 | PiP hide after | 30 seconds | 10, 20, 30, 60 or 300 seconds, or until hidden. The `show_pip` action can override it. |
 | Mute PiP | On | Start camera pictures without sound. |
 
+## Sendspin player
+
+From version 0.6.0 the device can also be a speaker for [Music Assistant](https://www.music-assistant.io/), using the open [Sendspin](https://github.com/Sendspin/spec) protocol. Music Assistant finds the device by itself, music and text-to-speech announcements play through the device's audio output, and they are **mixed with the game, the apps and the system sounds** instead of replacing them.
+
+**Two players with two jobs.** The Piston media player controls the device and shows what its apps are playing (launch, transport keys, system volume, artwork). The Sendspin player is the background audio: Music Assistant creates its own media player for it in Home Assistant, with its own volume, mute and artwork, and that is where you play music and send announcements. It is named after the device with "audio" added (for example "steam-machine audio"), so you can tell it from the Piston media player. Piston does not add a second media player for it; it adds a switch and a status sensor (below).
+
+How to use it:
+
+- Play music: pick the device's Music Assistant player in Music Assistant, or call `media_player.play_media` on that entity.
+- Announcements: use text to speech on the Music Assistant entity, for example `tts.speak` with `media_player_entity_id` set to it. Music Assistant raises the volume, plays the announcement and then continues the music.
+- Volume and mute of the Sendspin player only change the Sendspin stream. They do not touch the system or HDMI CEC volume that the Piston media player controls, and they are remembered across restarts.
+
+What Piston adds in Home Assistant, on the device page:
+
+| Entity | What it does |
+|---|---|
+| Sendspin player (switch, configuration) | Turns the player on or off. On by default. The state shown is what the device reports. |
+| Sendspin status (sensor, diagnostic) | `disabled`, `waiting` (listening, no server), `connected`, `streaming` or `error`. Attributes: `server_name`, `port`, `error`, `player_name`. |
+
+Both only exist for devices whose plugin has the player.
+
+**Security: anyone on your network can stream audio to the device.** Sendspin allows unauthenticated sessions, which is how Music Assistant connects, and Piston does not support Sendspin pairing yet. Any computer on the same network can therefore connect to the player and play sound on the device (it cannot read anything from the device or control anything except the sound and volume of the Sendspin player itself). The connection is encrypted but not authenticated. If that matters on your network, turn the **Sendspin player** switch off; the device then stops listening and stops advertising itself. Only a few connections are accepted at once and a browser page cannot connect (requests with an Origin header are refused).
+
+Details:
+
+- The player is named "<device name> audio". Music Assistant needs to reach TCP port 8928 on the device (Piston uses the next free port if 8928 is taken; the status sensor shows the port) and must be on the same network segment, because it finds the device with mDNS (`_sendspin._tcp`).
+- It plays raw 16-bit stereo audio (44.1 and 48 kHz). Music Assistant sends it as it is.
+- It follows the device: before a sleep or shutdown it says goodbye to Music Assistant and stops advertising, and after a wake it comes back by itself once the network is up. It is part of the plugin's background service, but it has not been tested in desktop mode yet.
+- One server at a time is connected; a newer connection normally takes over from the current one (Sendspin's rule: unless it has less activity, then it is turned away).
+- Not supported yet: pairing, FLAC and Opus (PCM is used), ducking the game's sound during an announcement, and showing metadata or artwork on the device itself.
+
 ## Plugin updates
 
 From version 0.4.0 the plugin on the device follows the integration: when you update the integration in HACS and restart Home Assistant, the device is brought to the same version.
@@ -114,6 +145,8 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 - **I removed the device or reinstalled Home Assistant.** In the plugin panel press Reset pairing, then pair again.
 - **Home Assistant says the integration or the plugin is too old.** Update the one that is older (a Repairs item tells you which). A plugin of version 0.4.0 or newer is updated by Home Assistant itself; an older one needs the zip installed by hand once.
 - **The plugin update never finishes.** Look at the device: Decky Loader's install dialog is waiting for you, or the device is in desktop mode (switch to game mode). The update entity and the Repairs item say which.
+- **The device does not show up in Music Assistant.** Check the Sendspin status sensor: `disabled` means the switch is off, `error` shows the reason (for example no free port). Music Assistant must be on the same network segment and able to reach the port shown in the sensor.
+- **Music Assistant plays but there is no sound.** The Sendspin volume is separate from the system volume: check the volume of the Music Assistant player, and the device's own output (TV or soundbar volume).
 - **Turn on does nothing.** Wake on LAN has to be set up on the device (see [Wake on LAN](#wake-on-lan)), and some devices cannot wake from a full shutdown.
 
 ## Uninstall

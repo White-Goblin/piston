@@ -103,6 +103,24 @@ class Scheduler:
             self.cursor_us = cursor + self._us(frames)
         return actions
 
+    def keepalive(self, min_fill_us: int = 10_000) -> list:
+        """Silence that keeps the sink fed while nothing is due, as far ahead as the release window (latency + lookahead)
+        but never past the next queued chunk's play time. A starved sink has real consequences: `pw-cat` blocks on an empty
+        pipe and then cannot answer volume or mute changes. The silence advances the cursor like any other write."""
+        now = self._now()
+        earliest = now + self.latency_us
+        cursor = earliest if self.cursor_us is None else max(self.cursor_us, earliest)
+        limit = now + self.latency_us + self.lookahead_us
+        if self._queue:
+            limit = min(limit, self._target(self._queue[0][0]))
+        if limit - cursor < min_fill_us:
+            return []
+        frames = round((limit - cursor) * self.rate / 1_000_000)
+        if frames <= 0:
+            return []
+        self.cursor_us = cursor + self._us(frames)
+        return [Silence(frames)]
+
     def clear(self, from_ts_us: int | None = None) -> list:
         """`stream/clear`. Without a timestamp everything goes (queue and cursor) and the sink must be flushed; with one,
         only queued chunks at or after it are discarded (audio already handed to the sink is past recall)."""

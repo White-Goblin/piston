@@ -90,23 +90,30 @@ class SendspinSettingsTests(unittest.TestCase):
                          (True, 50, False, 0))
         self.assertEqual((loaded["sendspin_name"], loaded["sendspin_private_key"], loaded["secret"]), ("", "", "aa"))
 
-    def test_the_name_follows_the_device_name_until_one_is_chosen(self):
+    def test_the_default_name_is_the_device_name_with_audio_added_until_one_is_chosen(self):
         self.s._update_settings({"device_name": "Living room"})
-        self.assertEqual(self.s._sendspin_name(), "Living room")
+        self.assertEqual(self.s._sendspin_name(), "Living room audio")
         self.s._save_sendspin(sendspin_name="  Big screen ")
         self.assertEqual(self.s._sendspin_name(), "Big screen")
         self.s._save_sendspin(sendspin_name="")
-        self.assertEqual(self.s._sendspin_name(), "Living room")
+        self.assertEqual(self.s._sendspin_name(), "Living room audio")
 
-    def test_a_long_name_is_cut_to_64_bytes_on_a_character_boundary(self):
+    def test_a_long_chosen_name_is_cut_to_64_bytes_on_a_character_boundary(self):
         self.s._save_sendspin(sendspin_name="é" * 40)
         name = self.s._sendspin_name()
         self.assertEqual(len(name.encode()), 64)
         self.assertEqual(name, "é" * 32)
-        self.s._update_settings({"device_name": "x" * 100})
-        self.s._save_sendspin(sendspin_name="")
-        self.assertEqual(len(self.s._sendspin_name().encode()), 64)
         self.assertEqual(len(clean_sendspin({**default_settings(), "sendspin_name": "日" * 30})["sendspin_name"].encode()), 63)
+
+    def test_the_default_name_still_ends_with_audio_when_the_device_name_is_long(self):
+        for device_name in ("x" * 100, "é" * 60, "日" * 40, "Box " + "y" * 58, "z" * 58):
+            self.s._update_settings({"device_name": device_name})
+            name = self.s._sendspin_name()
+            self.assertTrue(name.endswith(" audio"), name)
+            self.assertLessEqual(len(name.encode()), 64, name)
+            self.assertNotIn("  ", name)
+        self.s._update_settings({"device_name": "Short"})
+        self.assertEqual(self.s._sendspin_name(), "Short audio")
 
     def test_the_private_key_is_created_once_and_stays(self):
         first = self.s._sendspin_private_key()

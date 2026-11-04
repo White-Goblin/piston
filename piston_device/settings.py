@@ -17,6 +17,7 @@ SENSOR_INTERVALS = (10, 30, 60, 300)
 # Never returned to the panel
 SECRET_KEYS = ("secret", "sendspin_private_key")
 SENDSPIN_NAME_BYTES = 64  # the Sendspin hello limit
+SENDSPIN_NAME_SUFFIX = " audio"  # the default name is "<device name> audio", so it differs from the device's own media player
 SENDSPIN_DEFAULT_VOLUME = 50
 SENDSPIN_MAX_OUTPUT_DELAY = 5000
 
@@ -52,7 +53,7 @@ def default_settings() -> dict:
         "sensor_interval": 10,
         # Sendspin background player (see swe/specs/features/sendspin-player.md)
         "sendspin_enabled": True,
-        "sendspin_name": "",  # empty = follow the device name
+        "sendspin_name": "",  # empty = "<device name> audio"
         "sendspin_private_key": "",  # hex Curve25519 private key, created on first use; its public key is the client id
         "sendspin_volume": SENDSPIN_DEFAULT_VOLUME,
         "sendspin_muted": False,
@@ -128,9 +129,13 @@ class SettingsMixin:
     # --- Sendspin ---------------------------------------------------------------
 
     def _sendspin_name(self) -> str:
-        """The name shown in Music Assistant: the chosen one, else the device name."""
+        """The name shown in Music Assistant: the chosen one, else "<device name> audio" (the device name is cut so the
+        whole name fits the 64 bytes Sendspin allows)."""
         s = self._load_settings()
-        return s["sendspin_name"] or _truncate_bytes(s["device_name"], SENDSPIN_NAME_BYTES)
+        if s["sendspin_name"]:
+            return s["sendspin_name"]
+        room = SENDSPIN_NAME_BYTES - len(SENDSPIN_NAME_SUFFIX.encode())
+        return _truncate_bytes(s["device_name"], room).rstrip() + SENDSPIN_NAME_SUFFIX
 
     def _sendspin_private_key(self) -> bytes:
         """The device's Sendspin identity key; created and saved on first use (the client id is its public key)."""
