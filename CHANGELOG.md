@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.2
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 updates itself to this one (you approve the install on the device).** This release keeps protocol version 3.
+
+### Added
+- A "Plugin update ready" toast on the device when Decky Loader's install dialog is requested. Tapping it asks for the dialog again (it never approves anything for you). Decky's dialog takes the focus while it is open, so the toast is mainly useful when the dialog has gone away.
+
+### Fixed
+- The install dialog was lost when the Steam interface restarted while it was open (switching between desktop and game mode, for example), while Home Assistant kept asking you to approve it. The plugin now asks for a fresh dialog when the Steam interface loads.
+- The automatic return to the previous plugin version, when a new version installs but does not start, never ran: a call to a plugin backend that has stopped does not fail, it waits for ever. Every such call now gives up after 8 seconds.
+
 ## 0.4.1
 
 **Update the plugin on the device and the integration in Home Assistant together; from 0.4.0 on the plugin updates itself.** This release keeps protocol version 3. It is the first release checked with the plugin self-update on a real device: with 0.4.0 installed on both sides, updating the integration to 0.4.1 makes Home Assistant offer the plugin update, which you approve on the device.
