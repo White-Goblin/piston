@@ -70,7 +70,7 @@ Settings > Devices & services > Piston > Configure:
 
 From version 0.6.0 the device can also be a speaker for [Music Assistant](https://www.music-assistant.io/), using the open [Sendspin](https://github.com/Sendspin/spec) protocol. Music Assistant finds the device by itself, music and text-to-speech announcements play through the device's audio output, and they are **mixed with the game, the apps and the system sounds** instead of replacing them.
 
-**Two players with two jobs.** The Piston media player controls the device and shows what its apps are playing (launch, transport keys, system volume, artwork). The Sendspin player is the background audio: Music Assistant creates its own media player for it in Home Assistant, with its own volume, mute and artwork, and that is where you play music and send announcements. It is named after the device with "audio" added (for example "steam-machine audio"), so you can tell it from the Piston media player. Piston does not add a second media player for it; it adds a switch and a status sensor (below).
+**Two players with two jobs.** The Piston media player controls the device and shows what its apps are playing (launch, transport keys, system volume, artwork). The Sendspin player is the background audio: Music Assistant creates its own media player for it in Home Assistant, with its own volume, mute and artwork, and that is where you play music and send announcements. It is named after the device with "audio" added (for example "Living room audio"), so you can tell it from the Piston media player. Piston does not add a second media player for it; it adds a switch and a status sensor (below).
 
 How to use it:
 
