@@ -2,6 +2,18 @@
 
 ## 0.5.0
 
+**Piston: media and control for SteamOS devices in your living room.** A Home Assistant integration plus a small Decky Loader plugin that pushes commands from Home Assistant to the box under the TV (a Steam Deck, a Steam Machine or any other Decky Loader device).
+
+### Highlights
+- **Media player:** launch Steam games and apps as sources, transport keys (play, pause, next, previous), volume through CEC or the system, and what is playing with artwork.
+- **Power:** turn the device on with Wake on LAN, put it to sleep or shut it down, and an accurate state after every wake.
+- **Notifications:** show a toast on the device and get a click event back in your automations.
+- **Camera picture-in-picture:** put any Home Assistant camera on the screen, WebRTC with an HLS fallback.
+- **Device sensors and switches:** CPU, GPU, fan, memory, disk, controller batteries, the Steam screen, desktop mode, and restart buttons.
+- **Easy setup:** the device is found automatically and paired with a 6-digit code shown on its screen; no Home Assistant credential is stored on it.
+- **Self-updating plugin:** Home Assistant keeps the plugin on the device in step with the integration (you approve the install on the device).
+
+### Upgrading from 0.4.x
 **The project is now called Piston, and this is a clean break: it does not upgrade an install of 0.4.x.** Remove the old integration and plugin, install the new ones together (the integration and the plugin must be installed together) and pair again. This release keeps protocol version 3.
 
 ### Changed
