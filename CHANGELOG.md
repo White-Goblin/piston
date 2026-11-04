@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.4.1
+
+**Update the plugin on the device and the integration in Home Assistant together; from 0.4.0 on the plugin updates itself.** This release keeps protocol version 3 and changes nothing but the version number. It exists to check the plugin self-update on a real device: with 0.4.0 installed on both sides, updating the integration to 0.4.1 makes Home Assistant offer the plugin update, which you approve on the device.
+
 ## 0.4.0
 
 **Update the plugin on the device and the integration in Home Assistant together, by hand, this one last time.** This release keeps protocol version 3 and adds the first plugin that Home Assistant can update by itself; releases before it cannot be, so install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant. From the next release on the plugin follows the integration.
