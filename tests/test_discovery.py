@@ -2,8 +2,8 @@ import asyncio
 import types
 import unittest
 
-from custom_components.decky_home_assistant import discovery
-from custom_components.decky_home_assistant.const import SERVICE_TYPE
+from custom_components.piston import discovery
+from custom_components.piston.const import SERVICE_TYPE
 
 NAME = "abc123def456." + SERVICE_TYPE
 

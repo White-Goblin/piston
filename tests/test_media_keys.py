@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 
-from decky_ha.media_keys import KEY_CODES, MPRIS_METHODS, MediaKeyMixin
-from decky_ha.proto import messages as m
+from piston_device.media_keys import KEY_CODES, MPRIS_METHODS, MediaKeyMixin
+from piston_device.proto import messages as m
 
 
 class Host(MediaKeyMixin):
@@ -140,7 +140,7 @@ class PlaybackStatusTests(unittest.IsolatedAsyncioTestCase):
         async def fake_sleep(s):
             if len(calls) >= 2:
                 raise asyncio.CancelledError
-        with mock.patch("decky_ha.media_keys.asyncio.sleep", fake_sleep):
+        with mock.patch("piston_device.media_keys.asyncio.sleep", fake_sleep):
             with self.assertRaises(asyncio.CancelledError):
                 await h._playback_loop()
         self.assertEqual(len(calls), 2)

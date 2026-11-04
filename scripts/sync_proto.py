@@ -1,10 +1,10 @@
-"""Copy decky_ha/proto/ into the integration (HACS ships only custom_components)."""
+"""Copy piston_device/proto/ into the integration (HACS ships only custom_components)."""
 import os
 import shutil
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "decky_ha", "proto")
-DST = os.path.join(ROOT, "custom_components", "decky_home_assistant", "proto")
+SRC = os.path.join(ROOT, "piston_device", "proto")
+DST = os.path.join(ROOT, "custom_components", "piston", "proto")
 
 
 def sync() -> None:

@@ -3,8 +3,8 @@ import struct
 import unittest
 from unittest import mock
 
-from decky_ha import mdns
-from decky_ha.advertise import Advertiser
+from piston_device import mdns
+from piston_device.advertise import Advertiser
 
 
 def question(name: str, qtype: int) -> bytes:
@@ -27,13 +27,13 @@ def parse_records(packet: bytes) -> dict:
 
 class MdnsPacketTests(unittest.TestCase):
     def setUp(self):
-        self.adv = mdns.MdnsAdvertiser("_deckyha._tcp.local.", "abc123", "abc123.local.", 47830, "192.168.1.5",
+        self.adv = mdns.MdnsAdvertiser("_piston._tcp.local.", "abc123", "abc123.local.", 47830, "192.168.1.5",
                                        {"device_id": "abc123", "paired": 0})
 
     def test_answers_describe_the_service(self):
         rec = parse_records(self.adv._packet())
-        self.assertEqual(rec[mdns.T_PTR][0], "_deckyha._tcp.local.")
-        self.assertEqual(mdns._read_name(rec[mdns.T_PTR][1], 0)[0], "abc123._deckyha._tcp.local.")
+        self.assertEqual(rec[mdns.T_PTR][0], "_piston._tcp.local.")
+        self.assertEqual(mdns._read_name(rec[mdns.T_PTR][1], 0)[0], "abc123._piston._tcp.local.")
         port = struct.unpack(">HHH", rec[mdns.T_SRV][1][:6])[2]
         self.assertEqual(port, 47830)
         self.assertEqual(rec[mdns.T_A][1], bytes([192, 168, 1, 5]))
@@ -46,7 +46,7 @@ class MdnsPacketTests(unittest.TestCase):
         self.assertEqual(struct.unpack(">HHIH", packet[off:off + 10])[2], 0)
 
     def test_wants_only_our_names(self):
-        self.assertTrue(self.adv.wants(question("_deckyha._tcp.local.", mdns.T_PTR)))
+        self.assertTrue(self.adv.wants(question("_piston._tcp.local.", mdns.T_PTR)))
         self.assertTrue(self.adv.wants(question("abc123.local.", mdns.T_A)))
         self.assertFalse(self.adv.wants(question("_other._tcp.local.", mdns.T_PTR)))
         self.assertFalse(self.adv.wants(b"junk"))
@@ -119,7 +119,7 @@ class FailedStartTests(unittest.IsolatedAsyncioTestCase):
     """After a resume the first start fails with 'Network is unreachable'; nothing may be left behind."""
 
     def adv(self):
-        return mdns.MdnsAdvertiser("_deckyha._tcp.local.", "abc123", "abc123.local.", 47830, "192.168.1.5", {"device_id": "abc123"})
+        return mdns.MdnsAdvertiser("_piston._tcp.local.", "abc123", "abc123.local.", 47830, "192.168.1.5", {"device_id": "abc123"})
 
     def test_a_failed_open_closes_the_socket(self):
         closed = []

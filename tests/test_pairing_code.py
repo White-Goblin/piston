@@ -1,6 +1,6 @@
 import unittest
 
-from decky_ha.proto.code import PairingCode
+from piston_device.proto.code import PairingCode
 
 
 class Clock:

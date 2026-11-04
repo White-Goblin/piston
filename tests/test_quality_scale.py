@@ -5,7 +5,7 @@ import re
 import unittest
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
-PACKAGE = os.path.join(ROOT, "custom_components", "decky_home_assistant")
+PACKAGE = os.path.join(ROOT, "custom_components", "piston")
 
 # The rule names on https://developers.home-assistant.io/docs/core/integration-quality-scale/rules/ (checked 2026-11-02).
 # When the page changes, update this table and quality_scale.yaml together.

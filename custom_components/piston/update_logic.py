@@ -36,7 +36,7 @@ def version_key(version: str) -> tuple:
 
 
 def zip_name(version: str) -> str:
-    return f"decky-home-assistant-{version}.zip"
+    return f"piston-{version}.zip"
 
 
 def asset_url(version: str, name: str | None = None, repo: str = RELEASE_REPO) -> str:

@@ -109,7 +109,7 @@ const stopWebRtc = () => {
 const fail = (reason: string) => {
   if (failedOver || transport === "hls") return;
   failedOver = true;
-  console.warn("Decky Home Assistant PiP: WebRTC failed:", reason);
+  console.warn("Piston PiP: WebRTC failed:", reason);
   stopWebRtc();
   transport = "hls";
   setState("negotiating", `Falling back to HLS (${reason})`);

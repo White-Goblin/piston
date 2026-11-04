@@ -1,6 +1,6 @@
 import unittest
 
-from custom_components.decky_home_assistant.sensor import SCREENS, DeckySensor, SteamScreenSensor, async_setup_entry
+from custom_components.piston.sensor import SCREENS, DeckySensor, SteamScreenSensor, async_setup_entry
 from homeassistant.config_entries import ConfigEntry
 from .entityutil import connect, make_coordinator
 

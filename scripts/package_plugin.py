@@ -10,9 +10,9 @@ import sys
 import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PLUGIN_DIR = "Decky Home Assistant"
+PLUGIN_DIR = "Piston"
 TOP_FILES = ("main.py", "plugin.json", "package.json", "LICENSE")
-TREES = ("dist", "decky_ha", "py_modules")
+TREES = ("dist", "piston_device", "py_modules")
 SKIP_PARTS = {"__pycache__"}
 SKIP_SUFFIXES = (".map", ".pyc")
 
@@ -36,7 +36,7 @@ def build(out_dir: str, root: str = ROOT) -> str:
     with open(os.path.join(root, "package.json")) as f:
         version = json.load(f)["version"]
     os.makedirs(out_dir, exist_ok=True)
-    target = os.path.join(out_dir, f"decky-home-assistant-{version}.zip")
+    target = os.path.join(out_dir, f"piston-{version}.zip")
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:
         for path, name in collect(root):
             z.write(path, f"{PLUGIN_DIR}/{name}")

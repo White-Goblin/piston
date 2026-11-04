@@ -3,7 +3,7 @@ import asyncio
 import os
 import struct
 
-from custom_components.decky_home_assistant.client import ConnectionClosed
+from custom_components.piston.client import ConnectionClosed
 from . import wsclient
 
 

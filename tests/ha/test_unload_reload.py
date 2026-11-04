@@ -51,7 +51,7 @@ async def test_unload_writes_the_stored_state_through_the_real_store(hass, hass_
     await setup_and_connect(hass, config_entry, wait_until)
     assert await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
-    saved = hass_storage[f"decky_home_assistant.{config_entry.entry_id}"]
+    saved = hass_storage[f"piston.{config_entry.entry_id}"]
     assert saved["version"] == 1
     assert saved["data"]["groups"]["device"]["mac"] == "aa:bb:cc:dd:ee:ff"
     assert "session" not in saved["data"]["groups"]["device"]        # volatile: not stored
@@ -59,8 +59,8 @@ async def test_unload_writes_the_stored_state_through_the_real_store(hass, hass_
 
 
 async def test_after_a_restart_entities_come_from_the_stored_state_before_the_device_connects(hass, hass_storage, config_entry, device):
-    hass_storage[f"decky_home_assistant.{config_entry.entry_id}"] = {
-        "version": 1, "minor_version": 1, "key": f"decky_home_assistant.{config_entry.entry_id}",
+    hass_storage[f"piston.{config_entry.entry_id}"] = {
+        "version": 1, "minor_version": 1, "key": f"piston.{config_entry.entry_id}",
         "data": {"last_connected": None, "groups": {
             "device": {"device_id": "dev123abc456", "name": "Box", "mac": "aa:bb:cc:dd:ee:ff"},
             "sensors": {"keys": ["cpu_load"]}, "apps": {"apps": [{"appid": "1", "name": "A"}]}}}}

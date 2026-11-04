@@ -4,8 +4,8 @@ import unittest
 
 from . import ROOT
 
-SRC = os.path.join(ROOT, "decky_ha", "proto")
-DST = os.path.join(ROOT, "custom_components", "decky_home_assistant", "proto")
+SRC = os.path.join(ROOT, "piston_device", "proto")
+DST = os.path.join(ROOT, "custom_components", "piston", "proto")
 
 
 def _files(d):

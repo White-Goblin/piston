@@ -1,7 +1,7 @@
 """Download diagnostics with the real redaction helper, for a connected and for an offline device."""
 import json
 
-from custom_components.decky_home_assistant.diagnostics import async_get_config_entry_diagnostics
+from custom_components.piston.diagnostics import async_get_config_entry_diagnostics
 
 
 async def test_diagnostics_hide_the_secret_and_the_address_but_keep_the_state(hass, config_entry, device, wait_until):

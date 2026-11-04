@@ -8,8 +8,8 @@ from unittest import mock
 
 import decky
 
-from decky_ha import update, update_check, update_fetch
-from decky_ha.proto import messages as m
+from piston_device import update, update_check, update_fetch
+from piston_device.proto import messages as m
 
 from .test_update_check import make_zip
 
@@ -178,14 +178,14 @@ class PendingTests(UpdateBase):
 
     async def test_the_url_is_not_percent_encoded_even_when_the_path_has_spaces(self):
         self.host._drop_pending()
-        spaced = os.path.join(self.runtime, "Decky Home Assistant")
+        spaced = os.path.join(self.runtime, "Piston")
         os.makedirs(spaced)
         with mock.patch.object(update.UpdateMixin, "_update_dir", lambda self: spaced):
             self.host.update_info = {"state": "idle", "version": "", "reason": None}
             self.host._on_update_frame(self.frame())
             await self.host.update_task
             pending = await self.host.update_pending()
-        self.assertIn("Decky Home Assistant", pending["url"])
+        self.assertIn("Piston", pending["url"])
         self.assertNotIn("%", pending["url"])
 
     async def test_the_marker_keeps_the_revert_facts_for_a_dead_backend(self):
@@ -283,7 +283,7 @@ class PendingTests(UpdateBase):
         self.assertEqual(self.host.server.pushed, before)
 
     async def test_the_http_server_no_longer_serves_updates(self):
-        from decky_ha.http_server import HttpServerMixin
+        from piston_device.http_server import HttpServerMixin
 
         class Both(HttpServerMixin):
             nonce = "n"
@@ -300,7 +300,7 @@ class StartupTests(UpdateBase):
                   "expires": 9e12, "deadline": 9e12, "confirmed": False,
                   "revert_path": "/data/previous-1.0.0.zip", "revert_sha256": "b" * 64}
         marker.update(kw)
-        from decky_ha.settings import write_json_atomic
+        from piston_device.settings import write_json_atomic
         write_json_atomic(os.path.join(self.settings, "update.json"), marker)
 
     def set_installed(self, version):

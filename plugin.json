@@ -1,5 +1,5 @@
 {
-  "name": "Decky Home Assistant",
+  "name": "Piston",
   "author": "White-Goblin",
   "flags": [
     "debug"
@@ -12,7 +12,7 @@
       "media-player",
       "notifications"
     ],
-    "description": "Companion plugin for the Decky Home Assistant integration: pairing, the apps offered as sources, notifications, camera picture-in-picture and device control.",
+    "description": "Companion plugin for the Piston integration: pairing, the apps offered as sources, notifications, camera picture-in-picture and device control.",
     "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
   }
 }

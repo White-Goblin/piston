@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0 (unreleased)
+
+**The project is now called Piston, and this is a clean break: it does not upgrade an install of 0.4.x.** Remove the old integration and plugin, install the new ones and pair again.
+
+### Changed
+- New name, logo and tagline ("Media and control for SteamOS devices in your living room").
+- The integration domain is `piston` (was `decky_home_assistant`), the plugin folder and Decky Loader name are `Piston`, the device advertises `_piston._tcp` over mDNS and the plugin zip is `piston-<version>.zip`. Entity IDs, services and automations that used the old domain have to be recreated.
+- The Python package on the device is `piston_device`.
+- `hacs.json` declares Home Assistant 2026.10.0 as the minimum, the new icon replaces the old one, and each GitHub release body is now the changelog section (shown in Home Assistant's update entity).
+- The README explains installing through the Marketplace (Home Assistant 2026.11) or HACS.
+
 ## 0.4.2
 
 **Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 updates itself to this one (you approve the install on the device).** This release keeps protocol version 3.

@@ -6,10 +6,10 @@ import sys
 import types
 import unittest
 
-from custom_components.decky_home_assistant import client
-from custom_components.decky_home_assistant.const import HEARTBEAT_SECONDS
+from custom_components.piston import client
+from custom_components.piston.const import HEARTBEAT_SECONDS
 
-MODULE = "custom_components.decky_home_assistant.transport"
+MODULE = "custom_components.piston.transport"
 
 
 def fake_aiohttp():

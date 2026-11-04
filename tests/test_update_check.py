@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import zipfile
 
-from decky_ha import update_check as uc
+from piston_device import update_check as uc
 
 from . import ROOT
 
@@ -13,8 +13,8 @@ SHA = "a" * 64
 
 
 def make_zip(entries=None, version="1.2.3", extra=()):
-    files = {"Decky Home Assistant/main.py": "x", "Decky Home Assistant/plugin.json": "{}",
-             "Decky Home Assistant/package.json": json.dumps({"version": version})}
+    files = {"Piston/main.py": "x", "Piston/plugin.json": "{}",
+             "Piston/package.json": json.dumps({"version": version})}
     files.update(entries or {})
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
@@ -52,7 +52,7 @@ class RequestTests(unittest.TestCase):
         base = uc.asset_url("1.2.3")
         for url in (base.replace("github.com", "evil.example"), base.replace("https", "http"),
                     base.replace("White-Goblin", "someone-else"), base.replace("v1.2.3", "v1.2.4"),
-                    base + "?x=1", base.replace("decky-home-assistant-1.2.3.zip", "other.zip"),
+                    base + "?x=1", base.replace("piston-1.2.3.zip", "other.zip"),
                     base.replace("github.com", "github.com" + chr(64) + "evil.example"), "", None):
             self.refused(url=url)
 
@@ -77,12 +77,12 @@ class ArchiveTests(unittest.TestCase):
         self.refused(b"nope")
 
     def test_path_escapes_and_foreign_folders(self):
-        for name in ("../evil.py", "Decky Home Assistant/../../evil.py", "/etc/passwd", "Other/main.py", "main.py",
-                     "Decky Home Assistant\\x.py", "C:/x.py"):
+        for name in ("../evil.py", "Piston/../../evil.py", "/etc/passwd", "Other/main.py", "main.py",
+                     "Piston\\x.py", "C:/x.py"):
             self.refused(make_zip({name: "x"}))
 
     def test_symlinks(self):
-        info = zipfile.ZipInfo("Decky Home Assistant/link")
+        info = zipfile.ZipInfo("Piston/link")
         info.external_attr = (0o120777 << 16)
         self.assertIn("symbolic", self.refused(make_zip(extra=[(info, "/etc/passwd")])))
 
@@ -100,12 +100,12 @@ class ArchiveTests(unittest.TestCase):
         self.assertIn("different version", self.refused(make_zip(version="1.2.4")))
 
     def test_unreadable_package_json(self):
-        self.refused(make_zip({"Decky Home Assistant/package.json": "not json"}))
+        self.refused(make_zip({"Piston/package.json": "not json"}))
 
     def test_too_large_when_unpacked(self):
         from unittest import mock
         with mock.patch.object(uc, "MAX_UNPACKED_BYTES", 10):
-            self.assertIn("too large", self.refused(make_zip({"Decky Home Assistant/big.bin": "x" * 100})))
+            self.assertIn("too large", self.refused(make_zip({"Piston/big.bin": "x" * 100})))
 
     def test_a_zip_built_by_the_packager_passes(self):
         import sys
@@ -113,7 +113,7 @@ class ArchiveTests(unittest.TestCase):
         import package_plugin
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as out:
             for path, text in {"main.py": "x", "plugin.json": "{}", "LICENSE": "l", "package.json": json.dumps({"version": "9.9.9"}),
-                               "dist/index.js": "j", "decky_ha/a.py": "a"}.items():
+                               "dist/index.js": "j", "piston_device/a.py": "a"}.items():
                 full = os.path.join(root, path)
                 os.makedirs(os.path.dirname(full), exist_ok=True)
                 with open(full, "w") as f:

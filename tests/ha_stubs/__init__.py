@@ -24,7 +24,7 @@ def callback(func):
 
 
 class ConfigEntry:
-    def __init__(self, data=None, options=None, entry_id="entry", unique_id=None, domain="decky_home_assistant",
+    def __init__(self, data=None, options=None, entry_id="entry", unique_id=None, domain="piston",
                  title=""):
         self.data, self.options, self.entry_id = dict(data or {}), dict(options or {}), entry_id
         self.unique_id, self.domain, self.title = unique_id, domain, title
@@ -238,7 +238,7 @@ class ZeroconfServiceInfo:
     properties: dict = field(default_factory=dict)
     name: str = ""
     hostname: str = ""
-    type: str = "_deckyha._tcp.local."
+    type: str = "_piston._tcp.local."
 
 
 class _Marker:

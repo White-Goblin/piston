@@ -1,0 +1,18 @@
+{
+  "domain": "piston",
+  "name": "Piston",
+  "codeowners": [
+    "@White-Goblin"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/White-Goblin/piston",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/White-Goblin/piston/issues",
+  "quality_scale": "silver",
+  "requirements": [],
+  "version": "0.4.2",
+  "zeroconf": [
+    "_piston._tcp.local."
+  ]
+}

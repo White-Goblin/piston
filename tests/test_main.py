@@ -3,8 +3,8 @@ import unittest
 from unittest import mock
 
 from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir, wsclient
-from decky_ha import server as server_module
-from decky_ha.proto import PROTOCOL_VERSION, auth, messages as m, pake
+from piston_device import server as server_module
+from piston_device.proto import PROTOCOL_VERSION, auth, messages as m, pake
 import main
 
 
@@ -16,9 +16,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin = main.Plugin()
         patches = [
             mock.patch.object(main, "DEFAULT_PORT", 0),
-            mock.patch("decky_ha.advertise.outbound_ip", lambda: None),
-            mock.patch("decky_ha.state.wol_info", lambda: {"interface": "", "error": "none"}),
-            mock.patch("decky_ha.audio.AudioMixin._cec_audio_address", lambda self: None),
+            mock.patch("piston_device.advertise.outbound_ip", lambda: None),
+            mock.patch("piston_device.state.wol_info", lambda: {"interface": "", "error": "none"}),
+            mock.patch("piston_device.audio.AudioMixin._cec_audio_address", lambda self: None),
             mock.patch.object(main.Plugin, "_read_sensors", lambda self: {"cpu_load": 1.0}),
             mock.patch.object(main.Plugin, "_start_http_server", mock.AsyncMock()),
             mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 30, "muted": False}),

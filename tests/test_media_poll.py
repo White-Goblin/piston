@@ -4,10 +4,10 @@ import tempfile
 import unittest
 from unittest import mock
 
-from decky_ha import artwork
-from decky_ha.media import MediaMixin
-from decky_ha.media_keys import MediaKeyMixin
-from decky_ha.proto import messages as m
+from piston_device import artwork
+from piston_device.media import MediaMixin
+from piston_device.media_keys import MediaKeyMixin
+from piston_device.proto import messages as m
 
 JPEG = b"\xff\xd8\xff\xe0" + b"j" * 200
 PNG = b"\x89PNG\r\n\x1a\n" + b"p" * 100
@@ -77,7 +77,7 @@ class MediaPollTests(unittest.IsolatedAsyncioTestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.clock = Clock()
-        patch = mock.patch("decky_ha.media.time.time", self.clock)
+        patch = mock.patch("piston_device.media.time.time", self.clock)
         patch.start()
         self.addCleanup(patch.stop)
         self.h = Host(self.tmp.name)
@@ -125,7 +125,7 @@ class MediaPollTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_art_is_loaded_once_per_track(self):
         self.jellyfin()
-        with mock.patch("decky_ha.media.artwork.load_from_url", wraps=artwork.load_from_url) as load:
+        with mock.patch("piston_device.media.artwork.load_from_url", wraps=artwork.load_from_url) as load:
             await self.poll()
             await self.poll()
             await self.poll()
@@ -137,7 +137,7 @@ class MediaPollTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_art_that_cannot_be_loaded_still_gives_metadata(self):
         self.jellyfin(art="file:///nonexistent/art.png")
-        with mock.patch("decky_ha.media.artwork.load_from_url", wraps=artwork.load_from_url) as load:
+        with mock.patch("piston_device.media.artwork.load_from_url", wraps=artwork.load_from_url) as load:
             for _ in range(6):
                 await self.poll()
             self.assertEqual(load.call_count, 3)  # a few tries, then it gives up for this track

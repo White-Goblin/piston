@@ -1,6 +1,6 @@
 import unittest
 
-from decky_ha.proto import auth
+from piston_device.proto import auth
 
 SECRET = b"s" * 32
 

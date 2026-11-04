@@ -2,15 +2,15 @@
 (turn_on must work), everything else is available only while the device is online, and a problem takes all of them away."""
 import unittest
 
-from custom_components.decky_home_assistant.binary_sensor import ConnectivitySensor
-from custom_components.decky_home_assistant.button import DeckyPowerButton
-from custom_components.decky_home_assistant.client import AuthFailed, VersionSkew
-from custom_components.decky_home_assistant.event import ToastClickEvent
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
-from custom_components.decky_home_assistant.notify import DeckyNotify
-from custom_components.decky_home_assistant.select import PipCameraSelect
-from custom_components.decky_home_assistant.sensor import DeckySensor, PipStateSensor, SteamScreenSensor
-from custom_components.decky_home_assistant.switch import DesktopModeSwitch
+from custom_components.piston.binary_sensor import ConnectivitySensor
+from custom_components.piston.button import DeckyPowerButton
+from custom_components.piston.client import AuthFailed, VersionSkew
+from custom_components.piston.event import ToastClickEvent
+from custom_components.piston.media_player import DeckyMediaPlayer
+from custom_components.piston.notify import DeckyNotify
+from custom_components.piston.select import PipCameraSelect
+from custom_components.piston.sensor import DeckySensor, PipStateSensor, SteamScreenSensor
+from custom_components.piston.switch import DesktopModeSwitch
 from .entityutil import connect, make_coordinator
 
 GROUPS = {"device": {"session": "game"}, "apps": {"screen": "game", "running": False}, "pip": {"state": "hidden"},

@@ -1,4 +1,5 @@
 {
-  "name": "Decky Home Assistant",
+  "homeassistant": "2026.10.0",
+  "name": "Piston",
   "render_readme": true
 }

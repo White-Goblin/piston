@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 
-from custom_components.decky_home_assistant.client import CommandError
-from custom_components.decky_home_assistant.pip import PipRelay
+from custom_components.piston.client import CommandError
+from custom_components.piston.pip import PipRelay
 from .entityutil import connect, make_coordinator
 
 
@@ -159,16 +159,16 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
         from unittest import mock
 
         import main
-        from custom_components.decky_home_assistant.client import DeckyClient
-        from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
+        from custom_components.piston.client import DeckyClient
+        from custom_components.piston.coordinator import DeckyCoordinator
         from . import plugin_environment_patches, use_temp_settings_dir
         from .stdlib_transport import StdTransport
 
         use_temp_settings_dir()
         self.plugin = main.Plugin()
-        for p in (mock.patch.object(main, "DEFAULT_PORT", 0), mock.patch("decky_ha.advertise.outbound_ip", lambda: None),
-                  mock.patch("decky_ha.state.wol_info", lambda: {"interface": ""}),
-                  mock.patch("decky_ha.audio.AudioMixin._cec_audio_address", lambda self: None),
+        for p in (mock.patch.object(main, "DEFAULT_PORT", 0), mock.patch("piston_device.advertise.outbound_ip", lambda: None),
+                  mock.patch("piston_device.state.wol_info", lambda: {"interface": ""}),
+                  mock.patch("piston_device.audio.AudioMixin._cec_audio_address", lambda self: None),
                   mock.patch.object(main.Plugin, "_read_sensors", lambda self: {}),
                   mock.patch.object(main.Plugin, "_start_http_server", mock.AsyncMock()),
                   mock.patch.object(main.Plugin, "_audio_state", lambda self: {"volume": 1, "muted": False}),

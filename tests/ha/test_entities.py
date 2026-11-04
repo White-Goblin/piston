@@ -4,7 +4,7 @@ from unittest import mock
 import pytest
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from custom_components.decky_home_assistant.const import DOMAIN
+from custom_components.piston.const import DOMAIN
 
 APPS = [{"appid": "250900", "name": "Isaac", "kind": "steam"}, {"appid": "2451505133", "name": "Jellyfin", "kind": "shortcut"}]
 RUNNING = {"apps": APPS, "running": True, "appid": "250900", "name": "Isaac", "screen": "game"}
@@ -85,7 +85,7 @@ async def test_turn_off_sleeps_or_shuts_down_as_configured(hass, config_entry, l
 
 
 async def test_turn_on_sends_wake_on_lan_only_when_the_device_is_not_already_awake(hass, loaded, device, wait_until):
-    with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", mock.AsyncMock()) as wake:
+    with mock.patch("custom_components.piston.media_player.send_magic_packet", mock.AsyncMock()) as wake:
         await call(hass, "media_player", "turn_on", "media_player.box")
         wake.assert_not_awaited()                                   # connected and awake
         device.event("going_to_sleep", {"reason": "suspend"})
@@ -98,7 +98,7 @@ async def test_turn_on_reports_a_failed_wake_packet(hass, loaded, device, wait_u
     device.event("going_to_sleep", {"reason": "suspend"})
     await wait_until(lambda: hass.states.get("media_player.box").state == "standby")
     boom = mock.AsyncMock(side_effect=OSError("network unreachable"))
-    with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", boom):
+    with mock.patch("custom_components.piston.media_player.send_magic_packet", boom):
         with pytest.raises(HomeAssistantError, match="wake packet"):
             await call(hass, "media_player", "turn_on", "media_player.box")
 

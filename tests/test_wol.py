@@ -3,8 +3,8 @@ from unittest import mock
 
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant import wol
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
+from custom_components.piston import wol
+from custom_components.piston.media_player import DeckyMediaPlayer
 from .entityutil import connect, make_coordinator
 
 
@@ -49,13 +49,13 @@ class TurnOnTests(unittest.IsolatedAsyncioTestCase):
         coord.on_state("device", {"mac": "aa:bb:cc:dd:ee:ff", "broadcast": "10.0.0.255"})
         coord.on_event("going_to_sleep", {})
         coord.on_connection(False)
-        with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", mock.AsyncMock()) as send:
+        with mock.patch("custom_components.piston.media_player.send_magic_packet", mock.AsyncMock()) as send:
             await DeckyMediaPlayer(coord).async_turn_on()
         send.assert_awaited_once_with("aa:bb:cc:dd:ee:ff", "10.0.0.255")
 
     async def test_uses_the_stored_mac_when_the_device_never_connected_this_run(self):
         coord = make_coordinator(data={"mac": "11:22:33:44:55:66"})
-        with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", mock.AsyncMock()) as send:
+        with mock.patch("custom_components.piston.media_player.send_magic_packet", mock.AsyncMock()) as send:
             await DeckyMediaPlayer(coord).async_turn_on()
         send.assert_awaited_once_with("11:22:33:44:55:66", "255.255.255.255")
 
@@ -64,14 +64,14 @@ class TurnOnTests(unittest.IsolatedAsyncioTestCase):
         connect(coord, device={"mac": "aa:bb:cc:dd:ee:ff", "broadcast": "10.0.0.255"})
         coord.on_event("going_to_sleep", {})  # connected is still True, the device is asleep
         self.assertTrue(coord.connected)
-        with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", mock.AsyncMock()) as send:
+        with mock.patch("custom_components.piston.media_player.send_magic_packet", mock.AsyncMock()) as send:
             await DeckyMediaPlayer(coord).async_turn_on()
         send.assert_awaited_once_with("aa:bb:cc:dd:ee:ff", "10.0.0.255")
 
     async def test_turn_on_while_connected_does_nothing(self):
         coord = make_coordinator()
         connect(coord, device={"mac": "aa:bb:cc:dd:ee:ff"})
-        with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet", mock.AsyncMock()) as send:
+        with mock.patch("custom_components.piston.media_player.send_magic_packet", mock.AsyncMock()) as send:
             await DeckyMediaPlayer(coord).async_turn_on()
         send.assert_not_awaited()
 
@@ -82,7 +82,7 @@ class TurnOnTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_socket_errors_become_user_errors(self):
         coord = make_coordinator(data={"mac": "11:22:33:44:55:66"})
-        with mock.patch("custom_components.decky_home_assistant.media_player.send_magic_packet",
+        with mock.patch("custom_components.piston.media_player.send_magic_packet",
                         mock.AsyncMock(side_effect=OSError("network unreachable"))):
             with self.assertRaises(HomeAssistantError):
                 await DeckyMediaPlayer(coord).async_turn_on()

@@ -19,5 +19,5 @@ body:
     id: logs
     attributes:
       label: Logs
-      description: Home Assistant log lines for `decky_home_assistant` and the plugin log from the device. Remove addresses and tokens first.
+      description: Home Assistant log lines for `piston` and the plugin log from the device. Remove addresses and tokens first.
       render: text

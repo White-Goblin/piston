@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.issue_registry import IssueRegistry
 
-from custom_components.decky_home_assistant.unreachable import CHECK_EVERY, UNREACHABLE_AFTER, UnreachableMonitor
+from custom_components.piston.unreachable import CHECK_EVERY, UNREACHABLE_AFTER, UnreachableMonitor
 from .entityutil import make_coordinator
 
 T0 = datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc)

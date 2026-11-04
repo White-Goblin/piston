@@ -89,7 +89,7 @@ class _OnlyWebRedirects(urllib.request.HTTPRedirectHandler):
 def _from_web_url(url: str, timeout: float) -> bytes | None:
     opener = urllib.request.build_opener(_OnlyWebRedirects)
     deadline = time.monotonic() + max(FETCH_TOTAL_SECONDS, timeout)
-    with opener.open(urllib.request.Request(url, headers={"User-Agent": "decky-home-assistant"}), timeout=timeout) as response:
+    with opener.open(urllib.request.Request(url, headers={"User-Agent": "piston"}), timeout=timeout) as response:
         chunks, total = [], 0
         while total <= MAX_BYTES:
             if time.monotonic() > deadline:

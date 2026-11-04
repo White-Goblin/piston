@@ -4,9 +4,9 @@ from unittest import mock
 import pytest
 from homeassistant.helpers import issue_registry as ir
 
-import custom_components.decky_home_assistant as integration
-from custom_components.decky_home_assistant import update_logic
-from custom_components.decky_home_assistant.const import DOMAIN
+import custom_components.piston as integration
+from custom_components.piston import update_logic
+from custom_components.piston.const import DOMAIN
 
 from conftest import DEVICE_ID
 

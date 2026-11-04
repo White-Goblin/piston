@@ -1,9 +1,9 @@
 [run]
-source = custom_components.decky_home_assistant
+source = custom_components.piston
 omit =
-    # Verbatim copy of decky_ha/proto (scripts/sync_proto.py; a test fails when they differ). Its source of truth is exercised
+    # Verbatim copy of piston_device/proto (scripts/sync_proto.py; a test fails when they differ). Its source of truth is exercised
     # by the plugin's own suite; much of it (pairing code generation, the server half of the key exchange) only runs on the device.
-    */decky_home_assistant/proto/*
+    */piston/proto/*
 
 [report]
 show_missing = True

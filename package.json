@@ -1,7 +1,7 @@
 {
-  "name": "decky-home-assistant",
+  "name": "piston",
   "version": "0.4.2",
-  "description": "Decky companion plugin for the Decky Home Assistant integration: pairing, app list, toasts, PiP and device control",
+  "description": "Decky companion plugin for the Piston integration: pairing, app list, toasts, PiP and device control",
   "type": "module",
   "scripts": {
     "build": "rollup -c && pnpm run build:player",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/White-Goblin/steamos-media-control.git"
+    "url": "git+https://github.com/White-Goblin/piston.git"
   },
   "keywords": [
     "decky",
@@ -22,9 +22,9 @@
   "author": "White-Goblin",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/White-Goblin/steamos-media-control/issues"
+    "url": "https://github.com/White-Goblin/piston/issues"
   },
-  "homepage": "https://github.com/White-Goblin/steamos-media-control#readme",
+  "homepage": "https://github.com/White-Goblin/piston#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.0",

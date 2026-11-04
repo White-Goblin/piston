@@ -3,10 +3,10 @@ import unittest
 from unittest import mock
 
 from . import fake as fake_decky, use_temp_settings_dir
-from decky_ha import resume as resume_module
-from decky_ha.resume import ResumeMixin
-from decky_ha.settings import SettingsMixin
-from decky_ha.state import StateMixin
+from piston_device import resume as resume_module
+from piston_device.resume import ResumeMixin
+from piston_device.settings import SettingsMixin
+from piston_device.state import StateMixin
 
 
 class Server:

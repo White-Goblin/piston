@@ -1,6 +1,6 @@
 import unittest
 
-from decky_ha import media_model as mm
+from piston_device import media_model as mm
 
 GAME = {"appid": "620", "name": "Portal 2", "game": True}
 SHORTCUT = {"appid": "3608369380", "name": "Twitch", "game": False}

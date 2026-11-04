@@ -2,10 +2,10 @@ import asyncio
 import unittest
 import unittest.mock
 
-from custom_components.decky_home_assistant import client as c
-from decky_ha.pairing import PairingManager
-from decky_ha.proto import messages as m
-from decky_ha.server import ProtocolServer
+from custom_components.piston import client as c
+from piston_device.pairing import PairingManager
+from piston_device.proto import messages as m
+from piston_device.server import ProtocolServer
 from .stdlib_transport import StdTransport
 
 

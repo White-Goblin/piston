@@ -9,7 +9,7 @@ from .proto import PROTOCOL_VERSION
 
 log = logging.getLogger("decky-ha.advertise")
 
-SERVICE_TYPE = "_deckyha._tcp.local."
+SERVICE_TYPE = "_piston._tcp.local."
 CHECK_SECONDS = 15
 
 

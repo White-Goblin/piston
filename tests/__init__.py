@@ -1,4 +1,4 @@
-"""Test package: installs a fake `decky` module before any `decky_ha` import."""
+"""Test package: installs a fake `decky` module before any `piston_device` import."""
 import logging
 import os
 import sys
@@ -39,7 +39,7 @@ def use_temp_settings_dir() -> str:
 
 
 class StubLifecycle:
-    """Stands in for decky_ha.lifecycle.Lifecycle in tests that run Plugin._main(), so they never start gdbus or take a
+    """Stands in for piston_device.lifecycle.Lifecycle in tests that run Plugin._main(), so they never start gdbus or take a
     real sleep inhibitor on the machine running the tests."""
     instances = []
 
@@ -58,5 +58,5 @@ def plugin_environment_patches():
     """Patches that make Plugin._main() independent of the machine the tests run on: no real lifecycle monitor, and a
     fixed session (the real detector looks at this machine's processes, and a desktop here would refuse game-mode commands)."""
     from unittest import mock
-    return [mock.patch("decky_ha.state.Lifecycle", StubLifecycle),
-            mock.patch("decky_ha.state.detect_session", lambda comms=None: "game")]
+    return [mock.patch("piston_device.state.Lifecycle", StubLifecycle),
+            mock.patch("piston_device.state.detect_session", lambda comms=None: "game")]

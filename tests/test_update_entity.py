@@ -2,10 +2,10 @@ import unittest
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.decky_home_assistant import update_logic as ul
-from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
-from custom_components.decky_home_assistant.switch import AutoUpdateSwitch
-from custom_components.decky_home_assistant.update import PluginUpdate
+from custom_components.piston import update_logic as ul
+from custom_components.piston.coordinator import DeckyCoordinator
+from custom_components.piston.switch import AutoUpdateSwitch
+from custom_components.piston.update import PluginUpdate
 
 from .entityutil import FakeClient
 from .test_coordinator import entry
@@ -113,7 +113,7 @@ class UpdateEntityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_install_while_the_device_is_away_is_an_error_the_user_sees(self):
         from homeassistant.exceptions import HomeAssistantError
-        from custom_components.decky_home_assistant.client import DeviceOffline
+        from custom_components.piston.client import DeviceOffline
         self.coord.on_connection(True)
         self.hello("0.4.0")
         await self.settle()

@@ -6,8 +6,8 @@ import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from decky_ha import artwork as aw
-from decky_ha.proto import messages as m
+from piston_device import artwork as aw
+from piston_device.proto import messages as m
 
 JPEG = b"\xff\xd8\xff\xe0" + b"j" * 100
 PNG = b"\x89PNG\r\n\x1a\n" + b"p" * 100

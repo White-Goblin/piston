@@ -3,13 +3,13 @@ import unittest
 from unittest import mock
 
 from . import fake as fake_decky, use_temp_settings_dir
-from decky_ha.audio import AudioMixin
-from decky_ha.control import ControlMixin
-from decky_ha.pip import PipMixin
-from decky_ha.pip_signal import PipSignalMixin
-from decky_ha.proto import messages as m
-from decky_ha.settings import SettingsMixin
-from decky_ha.state import StateMixin
+from piston_device.audio import AudioMixin
+from piston_device.control import ControlMixin
+from piston_device.pip import PipMixin
+from piston_device.pip_signal import PipSignalMixin
+from piston_device.proto import messages as m
+from piston_device.settings import SettingsMixin
+from piston_device.state import StateMixin
 
 
 class Host(SettingsMixin, StateMixin, ControlMixin, AudioMixin, PipMixin, PipSignalMixin):
@@ -94,7 +94,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_launch_fails_if_old_app_never_closes(self):
         await self.h.report_app_state("42", "Other")
-        with mock.patch("decky_ha.control.APP_WAIT_SECONDS", 0.2):
+        with mock.patch("piston_device.control.APP_WAIT_SECONDS", 0.2):
             with self.assertRaises(m.ProtocolError) as cm:
                 await self.h._cmd_launch({"appid": "250900"})
         self.assertEqual(cm.exception.code, m.INTERNAL)
@@ -123,13 +123,13 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
             await self.h._cmd_power({"action": "explode"})
 
     async def test_suspend_announces_sleep_before_emitting(self):
-        with mock.patch("decky_ha.control.SLEEP_FLUSH_SECONDS", 0):
+        with mock.patch("piston_device.control.SLEEP_FLUSH_SECONDS", 0):
             await self.h._cmd_power({"action": "suspend"})
         self.assertEqual(self.h.events[0][0], "going_to_sleep")
         self.assertEqual(self.emitted("power"), [{"action": "suspend"}])
 
     async def test_suspend_carries_the_reason(self):
-        with mock.patch("decky_ha.control.SLEEP_FLUSH_SECONDS", 0):
+        with mock.patch("piston_device.control.SLEEP_FLUSH_SECONDS", 0):
             await self.h._cmd_power({"action": "suspend"})
         self.assertEqual(self.h.events, [("going_to_sleep", {"reason": "suspend"})])
 
@@ -141,7 +141,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_suspend_announces_itself_when_logind_cannot_protect_it(self):
         self.h.lifecycle = mock.Mock(active=True, protecting=False)
-        with mock.patch("decky_ha.control.SLEEP_FLUSH_SECONDS", 0):
+        with mock.patch("piston_device.control.SLEEP_FLUSH_SECONDS", 0):
             await self.h._cmd_power({"action": "suspend"})
         self.assertEqual([e[0] for e in self.h.events], ["going_to_sleep"])
 

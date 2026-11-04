@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Piston: a piston rod pushing a play triangle across a TV screen. Media and control for SteamOS devices. -->
+  <rect width="256" height="256" rx="48" fill="#1e2328"/>
+  <rect x="116" y="172" width="24" height="26" fill="#8a6a30"/>
+  <rect x="80" y="194" width="96" height="14" rx="7" fill="#8a6a30"/>
+  <rect x="26" y="48" width="204" height="130" rx="18" fill="#12161a" stroke="#d9a441" stroke-width="9"/>
+  <rect x="40" y="62" width="176" height="102" rx="8" fill="#2b3138"/>
+  <!-- steam puffs -->
+  <circle cx="68" cy="82" r="7" fill="#e8e2d5" opacity="0.55"/>
+  <circle cx="82" cy="75" r="5" fill="#e8e2d5" opacity="0.4"/>
+  <!-- cylinder -->
+  <rect x="52" y="94" width="58" height="40" rx="6" fill="#c8743c"/>
+  <rect x="62" y="94" width="8" height="40" fill="#d9a441"/>
+  <rect x="92" y="94" width="8" height="40" fill="#d9a441"/>
+  <!-- rod and head -->
+  <rect x="110" y="110" width="40" height="8" fill="#e8e2d5"/>
+  <rect x="146" y="100" width="8" height="28" rx="3" fill="#e8e2d5"/>
+  <!-- play triangle -->
+  <path d="M160 92 L160 136 L198 114 Z" fill="#f2c46b" stroke="#f2c46b" stroke-width="6" stroke-linejoin="round"/>
+</svg>

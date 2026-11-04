@@ -2,8 +2,8 @@ import asyncio
 import unittest
 
 from . import wsclient
-from decky_ha.proto import PROTOCOL_VERSION, auth, messages as m
-from decky_ha.server import ProtocolServer
+from piston_device.proto import PROTOCOL_VERSION, auth, messages as m
+from piston_device.server import ProtocolServer
 
 SECRET = b"k" * 32
 HELLO = {"type": "hello", "proto": PROTOCOL_VERSION, "min_proto": 1, "device_id": "ha"}
@@ -107,7 +107,7 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((r["id"], r["ok"], r["error"]["code"]), (i, False, code))
 
     async def test_the_device_hello_carries_the_plugin_version_and_lane(self):
-        from decky_ha.proto import LANE_VERSION
+        from piston_device.proto import LANE_VERSION
         self.server._hello_extra = lambda: m.device_hello_extra("1.2.3", LANE_VERSION)
         _, hello = await self.connect()
         self.assertEqual((hello["plugin_version"], hello["lane"]), ("1.2.3", LANE_VERSION))

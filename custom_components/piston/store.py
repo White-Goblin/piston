@@ -14,7 +14,7 @@ entity can exist at startup without showing a stale reading as live:
 | media       | nothing                                                   | everything (what is playing is live)      |
 | update      | plugin_version, auto_update, latch (last failed update)   | nothing (all of it is stable)             |
 
-The file is `.storage/decky_home_assistant.<entry_id>`. It also records `last_connected`, the last moment there was a
+The file is `.storage/piston.<entry_id>`. It also records `last_connected`, the last moment there was a
 connection to the device (the unreachable-too-long repair issue is measured from it).
 
 Home Assistant's `Store.async_delay_save` pushes the write out to `delay` seconds after the LAST call (the earlier timer

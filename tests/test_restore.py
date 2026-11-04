@@ -7,10 +7,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-import custom_components.decky_home_assistant as integration
-from custom_components.decky_home_assistant import config_flow
-from custom_components.decky_home_assistant import binary_sensor, media_player, select as select_platform, sensor
-from custom_components.decky_home_assistant.store import restored_groups, stable_subset
+import custom_components.piston as integration
+from custom_components.piston import config_flow
+from custom_components.piston import binary_sensor, media_player, select as select_platform, sensor
+from custom_components.piston.store import restored_groups, stable_subset
 from .entityutil import make_coordinator
 from .stdlib_transport import StdTransport
 from .test_sensors import Collector
@@ -134,7 +134,7 @@ class SetupRestoreTests(unittest.IsolatedAsyncioTestCase):
         self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
 
     async def test_stored_structure_is_in_place_before_the_platforms_are_set_up(self):
-        Store.files["decky_home_assistant.e1"] = {"version": 1, "data": {"groups": STORED, "last_connected": "2026-11-03T08:00:00+00:00"}}
+        Store.files["piston.e1"] = {"version": 1, "data": {"groups": STORED, "last_connected": "2026-11-03T08:00:00+00:00"}}
         await integration.async_setup_entry(self.hass, self.entry)
         groups, restored, connected = self.seen[0]
         self.assertEqual(sorted(groups), ["apps", "audio", "controllers", "device", "sensors"])
@@ -147,8 +147,8 @@ class SetupRestoreTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.seen[0][:2], ({}, set()))
 
     async def test_a_corrupt_file_is_ignored_at_startup(self):
-        Store.files["decky_home_assistant.e1"] = ValueError("not json")
-        with self.assertLogs("custom_components.decky_home_assistant.store", "WARNING"):
+        Store.files["piston.e1"] = ValueError("not json")
+        with self.assertLogs("custom_components.piston.store", "WARNING"):
             self.assertTrue(await integration.async_setup_entry(self.hass, self.entry))
         self.assertEqual(self.seen[0][:2], ({}, set()))
 

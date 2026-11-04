@@ -3,10 +3,10 @@ import unittest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant import select as select_platform, sensor
-from custom_components.decky_home_assistant.client import CommandError
-from custom_components.decky_home_assistant.const import DEFAULT_OPTIONS
-from custom_components.decky_home_assistant.select import OFF, PipCameraSelect, pip_options
+from custom_components.piston import select as select_platform, sensor
+from custom_components.piston.client import CommandError
+from custom_components.piston.const import DEFAULT_OPTIONS
+from custom_components.piston.select import OFF, PipCameraSelect, pip_options
 from tests.ha_stubs import PLATFORM
 from .entityutil import connect, make_coordinator
 from .test_sensors import Collector
@@ -113,7 +113,7 @@ class SelectTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_errors_reach_the_user(self):
         s, coord = select()
-        from custom_components.decky_home_assistant.client import DeviceOffline
+        from custom_components.piston.client import DeviceOffline
         coord.pip.error = DeviceOffline("x")
         with self.assertRaises(HomeAssistantError) as cm:
             await s.async_show_pip(camera="camera.a")

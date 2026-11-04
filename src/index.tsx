@@ -17,8 +17,8 @@ export default definePlugin(() => {
   const unregisterUpdate = registerUpdateInstaller();
 
   return {
-    name: "Decky Home Assistant",
-    titleView: <div className={staticClasses.Title}>Decky Home Assistant</div>,
+    name: "Piston",
+    titleView: <div className={staticClasses.Title}>Piston</div>,
     content: <Panel />,
     icon: <FaHome />,
     onDismount() {

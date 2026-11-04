@@ -7,10 +7,10 @@ from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from . import flowutil
 from .stdlib_transport import StdTransport
-from custom_components.decky_home_assistant import config_flow as cf
-from custom_components.decky_home_assistant.const import DOMAIN
-from decky_ha.pairing import PairingManager
-from decky_ha.server import ProtocolServer
+from custom_components.piston import config_flow as cf
+from custom_components.piston.const import DOMAIN
+from piston_device.pairing import PairingManager
+from piston_device.server import ProtocolServer
 
 
 class DeviceFixture:

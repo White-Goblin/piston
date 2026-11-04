@@ -1,7 +1,7 @@
 import time
 import unittest
 
-from decky_ha import mpris_meta as mm
+from piston_device import mpris_meta as mm
 
 # Captured on the dev device (art data trimmed to a few characters).
 JELLYFIN = ('a{sv} 8 "mpris:artUrl" s "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEB" '

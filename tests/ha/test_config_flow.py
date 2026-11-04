@@ -7,7 +7,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.decky_home_assistant.const import DEFAULT_OPTIONS, DOMAIN
+from custom_components.piston.const import DEFAULT_OPTIONS, DOMAIN
 
 from conftest import DEVICE_ID, SECRET
 
@@ -16,7 +16,7 @@ def announcement(device, **properties):
     props = {"device_id": DEVICE_ID, "name": "Box", "proto": "2", "paired": "0", **properties}
     props = {k: v for k, v in props.items() if v is not None}
     return ZeroconfServiceInfo(ip_address=ip_address("127.0.0.1"), ip_addresses=[ip_address("127.0.0.1")], port=device.port,
-                               hostname="box.local.", type="_deckyha._tcp.local.", name=f"{DEVICE_ID}._deckyha._tcp.local.",
+                               hostname="box.local.", type="_piston._tcp.local.", name=f"{DEVICE_ID}._piston._tcp.local.",
                                properties=props)
 
 
@@ -153,7 +153,7 @@ async def test_options_are_saved_as_numbers_and_the_sensor_interval_reaches_the_
 
 
 async def test_removing_the_entry_unpairs_the_device_and_deletes_its_stored_state(hass, hass_storage, config_entry, loaded, device):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     await hass.config_entries.async_unload(config_entry.entry_id)
     await hass.async_block_till_done()
     assert key in hass_storage

@@ -8,8 +8,8 @@ import pytest
 from homeassistant.setup import async_setup_component
 from zeroconf import ServiceStateChange
 
-from custom_components.decky_home_assistant import discovery, wol
-from custom_components.decky_home_assistant.const import SERVICE_TYPE
+from custom_components.piston import discovery, wol
+from custom_components.piston.const import SERVICE_TYPE
 
 from conftest import DEVICE_ID
 

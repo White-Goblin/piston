@@ -4,8 +4,8 @@ from unittest import mock
 import pytest
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant import pip as pip_module
-from custom_components.decky_home_assistant.const import DOMAIN
+from custom_components.piston import pip as pip_module
+from custom_components.piston.const import DOMAIN
 
 from conftest import FakeCamera
 
