@@ -45,6 +45,7 @@ class StubLifecycle:
 
     def __init__(self, **callbacks):
         self.callbacks, self.active, self.protecting, self.started, self.stopped = callbacks, False, False, False, False
+        self.aborted = False
         StubLifecycle.instances.append(self)
 
     async def start(self):
@@ -52,6 +53,9 @@ class StubLifecycle:
 
     async def stop(self):
         self.stopped = True
+
+    def abort(self):
+        self.aborted, self.active = True, False
 
 
 def plugin_environment_patches():

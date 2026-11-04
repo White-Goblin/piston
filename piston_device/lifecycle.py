@@ -43,6 +43,39 @@ async def shutdown_reason() -> str:
         return "shutdown"
 
 
+def reap_orphans(proc_dir: str = "/proc", own_uid: int | None = None) -> int:
+    """Kill `gdbus monitor` helpers of ours whose parent is gone (a plugin process that Decky had to SIGKILL cannot clean up
+    after itself, and its children are adopted by init). Only processes of this user with exactly our command line and
+    parent id 1 are touched. Returns how many were killed."""
+    import os
+    import signal
+    uid = os.getuid() if own_uid is None else own_uid
+    wanted = b"\0".join(a.encode() for a in MONITOR_ARGV)
+    killed = 0
+    try:
+        entries = [e for e in os.listdir(proc_dir) if e.isdigit()]
+    except OSError:
+        return 0
+    for entry in entries:
+        try:
+            if os.stat(f"{proc_dir}/{entry}").st_uid != uid:
+                continue
+            with open(f"{proc_dir}/{entry}/cmdline", "rb") as f:
+                if f.read().rstrip(b"\0") != wanted:
+                    continue
+            with open(f"{proc_dir}/{entry}/stat") as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+            if ppid != 1:
+                continue
+            os.kill(int(entry), signal.SIGTERM)
+            killed += 1
+        except (OSError, ValueError, IndexError):
+            continue
+    if killed:
+        decky.logger.info(f"Stopped {killed} leftover gdbus monitor process(es) of an earlier run")
+    return killed
+
+
 class Lifecycle:
     """`on_sleep()` and `on_shutdown(reason)` are async and should send the event and flush it; `on_resume()` is async too.
     `active` is True while the signal monitor is running."""
@@ -51,7 +84,8 @@ class Lifecycle:
                  on_resume: Callable[[], Awaitable], spawn: Spawn = asyncio.create_subprocess_exec,
                  sleep: Callable[[float], Awaitable] = asyncio.sleep, clock: Callable[[], float] = time.monotonic,
                  reason: Callable[[], Awaitable[str]] = shutdown_reason, inhibit_cap: float = INHIBIT_CAP_SECONDS,
-                 restart_delays: tuple = RESTART_DELAYS):
+                 restart_delays: tuple = RESTART_DELAYS, reap: Callable[[], int] | None = None):
+        self._reap = reap_orphans if reap is None else reap
         self._on_sleep, self._on_shutdown, self._on_resume = on_sleep, on_shutdown, on_resume
         self._spawn, self._sleep, self._clock, self._reason = spawn, sleep, clock, reason
         self._cap, self._delays = inhibit_cap, restart_delays
@@ -69,7 +103,24 @@ class Lifecycle:
 
     async def start(self) -> None:
         self._stopped = False
+        self._reap()  # helpers a previous run left behind when it was killed
         self._task = asyncio.get_running_loop().create_task(self._run())
+
+    def abort(self) -> None:
+        """Synchronous stop (no waiting, never raises): kill the monitor and the inhibitor at once. Needed because a plugin that
+        is killed by Decky leaves its `gdbus monitor` running for good."""
+        self._stopped = True
+        self.active = False
+        for task in (self._task, self._resume_task):
+            if task is not None:
+                task.cancel()
+        for proc in (self._monitor, self._inhibitor):
+            try:
+                if proc is not None:
+                    proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+        self._monitor = self._inhibitor = None
 
     async def stop(self) -> None:
         self._stopped = True

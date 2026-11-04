@@ -36,8 +36,12 @@ CARD_PUSH_INTERVAL_S = 0.25  # the card goes to the UI at most four times a seco
 POLL_INTERVAL_S = 0.01
 DECODE_FAILURE_LIMIT = 20  # decode failures within DECODE_FAILURE_WINDOW_S end the stream
 DECODE_FAILURE_WINDOW_S = 5.0
-OPEN_ATTEMPTS = 3  # the audio output can be slow to come up right after a wake; the server will not ask again
-OPEN_RETRY_S = 0.5
+OPEN_TOTAL_S = 10.0  # one attempt to open the audio output, whatever it does (the sink has its own, shorter budget)
+OPEN_BACKOFF_S = (0.5, 2, 5, 10, 20, 30)  # between attempts while the output does not come up; the stream stays accepted meanwhile
+LEVEL_RETRY_S = 2.0   # a volume or mute change that could not be applied is tried again
+CLOSE_BUDGET_S = 2.5  # closing the output at the end of a stream or session
+LEVELS_BUDGET_S = 5.0  # applying a volume or mute change
+WRITE_STALL_S = 2.0   # an output that takes no audio for this long is treated as failed (a stalled pipe would block the audio task for good)
 
 
 def monotonic_us() -> int:
@@ -78,6 +82,18 @@ class SendspinSession:
         self._card_sent_at = None   # monotonic time of that
         self._card_dirty = False
         self._decoder = None
+        # The audio output is only ever touched by the audio task (`_audio_loop`), never by the task that reads the server's
+        # messages: a hung audio server must not make the player deaf to the server (swe/notes/sendspin/live-results.md, incident).
+        self._want_fmt = None       # (rate, channels, bits, generation) the sink should be open for; None = closed
+        self._want_gen = 0
+        self._sink_fmt = None       # what it is open for now
+        self._sink_ready = False
+        self._sink_down = False     # an open failed and is being retried: reported to the server as available=false
+        self._open_failures = 0
+        self._next_open_at = 0.0
+        self._flush_wanted = False
+        self._levels_dirty = True
+        self._levels_retry_at = 0.0
         self._decode_failures = []  # monotonic times of recent decode failures
         self._seen_decode_errors = 0
         self._admit = admit  # async (session) -> None to accept or a goodbye reason to reject (set by the listener)
@@ -117,6 +133,21 @@ class SendspinSession:
     @property
     def card_commands(self) -> list:
         return self.card.commands() if self._role_active(CONTROLLER_ROLE) else []
+
+    def abort(self, reason: str = "shutdown") -> None:
+        """Synchronous end for a plugin that is unloading and cannot count on its event loop: kill the audio output, send the
+        goodbye and the close frame if the connection takes them at once, and drop the connection. Never raises."""
+        try:
+            self.sink.abort()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if self._transport is not None:
+                self._writer.write(wsproto.frame(wsproto.OP_BIN, self._transport.send(sm.build_client_goodbye(reason))))
+            wsproto.send_close_now(self._writer, 1000)
+            self._writer.close()
+        except Exception:  # noqa: BLE001
+            pass
 
     def request_stop(self, reason: str = "shutdown") -> None:
         """Ask the session to say goodbye and end (the task running `run()` finishes it)."""
@@ -283,15 +314,14 @@ class SendspinSession:
 
     async def _set_volume(self, volume: int) -> None:
         self.volume = volume
-        await self.sink.set_volume(volume)
+        self._levels_dirty = True
         self.card.set_volume(self.volume, self.muted)
         self._on_settings(volume=volume)
         self._push_card()
 
     async def _steady(self) -> None:
-        await self.sink.set_volume(self.volume)
-        await self.sink.set_mute(self.muted)
-        self._tasks = [asyncio.create_task(self._time_loop()), asyncio.create_task(self._playout_loop())]
+        self._levels_dirty = True  # applied by the audio task
+        self._tasks = [asyncio.create_task(self._time_loop()), asyncio.create_task(self._audio_loop())]
         if self.player_active:
             await self._send_state()
         reader = asyncio.create_task(self._read_loop())
@@ -330,7 +360,8 @@ class SendspinSession:
             if (roles is None or "player" in roles) and self.streaming:
                 if isinstance(self._decoder, codecs.OpusDecoder):
                     self._decoder.reset()  # Opus predicts from the previous packet: after a clear the next one starts fresh
-                await self._apply_actions(self.scheduler.clear(value.get("from_timestamp")))
+                if any(isinstance(a, Flush) for a in self.scheduler.clear(value.get("from_timestamp"))):
+                    self._flush_wanted = True  # the audio task flushes the output
         elif message_type == "stream/end":
             roles = value.get("roles")
             if (roles is None or "player" in roles) and self.streaming:
@@ -374,6 +405,8 @@ class SendspinSession:
             decoder.close()
 
     async def _start_stream(self, fmt: dict) -> None:
+        """Accept a stream. Only bookkeeping happens here (the read loop must stay responsive); the audio task opens the
+        output, retrying with a backoff if it does not come up, and sends the state once it plays."""
         checked = sm.validate_stream_format(fmt)
         self._close_decoder()
         decoder, sink_bits = self._build_decoder(checked)
@@ -382,26 +415,16 @@ class SendspinSession:
         self.scheduler.set_format(checked["sample_rate"], checked["channels"] * sink_bits // 8, decode=decoder.decode if decoder else None)
         self._seen_decode_errors = 0
         self._log(f"sendspin: stream {checked['codec']} {checked['sample_rate']} Hz {checked['bit_depth'] if checked['codec'] != 'opus' else 16}-bit")
-        for attempt in range(1, OPEN_ATTEMPTS + 1):
-            try:
-                await self.sink.open(checked["sample_rate"], checked["channels"], sink_bits)
-                break
-            except SinkError as e:
-                self._log(f"sendspin: audio output failed (attempt {attempt} of {OPEN_ATTEMPTS}): {e}")
-                if attempt == OPEN_ATTEMPTS:
-                    self.streaming = False
-                    self._on_status("error", server_name=self.server_name, error=str(e))
-                    return
-                await asyncio.sleep(OPEN_RETRY_S)
         self.streaming, self.format = True, fmt
-        self._on_status("streaming", server_name=self.server_name)
-        await self._send_state()
+        self._want_gen += 1  # a new stream always gets a fresh output stream (nothing of the previous one is left in it)
+        self._want_fmt = (checked["sample_rate"], checked["channels"], sink_bits, self._want_gen)
+        self._open_failures, self._next_open_at = 0, 0.0
 
     async def _end_stream(self, error: str | None = None) -> None:
         self.streaming, self.format = False, None
+        self._want_fmt, self._sink_down, self._flush_wanted = None, False, False
         self.scheduler.clear()
-        self._close_decoder()
-        await self.sink.close()
+        self._close_decoder()  # the audio task closes the output
         if error:
             self._on_status("error", server_name=self.server_name, error=error)
         else:
@@ -419,23 +442,22 @@ class SendspinSession:
         changes = {}
         if name == "volume":
             self.volume = command["volume"]
-            await self.sink.set_volume(self.volume)
             changes["volume"] = self.volume
         elif name == "mute":
             self.muted = command["mute"]
-            await self.sink.set_mute(self.muted)
             changes["muted"] = self.muted
         else:
             self.output_delay_ms = command["output_delay_ms"]
             self.scheduler.output_delay_us = self.output_delay_ms * 1000
             changes["output_delay_ms"] = self.output_delay_ms
+        self._levels_dirty = True  # the audio task applies it to the output
         self._on_settings(**changes)
         self.card.set_volume(self.volume, self.muted)
         self._push_card()
         await self._send_state()
 
     async def _send_state(self) -> None:
-        self._available = self.clock.converged
+        self._available = self.clock.converged and not self._sink_down  # an output that does not come up is reported as unavailable
         await self._send(sm.build_client_state(self._available, self.volume, self.muted, self.output_delay_ms,
                                                required_lead_time_ms=REQUIRED_LEAD_TIME_MS, fmt=self.format))
 
@@ -506,23 +528,124 @@ class SendspinSession:
         await self._end_stream(error="decode failed")
         return True
 
-    async def _playout_loop(self) -> None:
+    # --- the audio task: the only code that touches the audio output ------------------------------------------------------------
+
+    async def _audio_loop(self) -> None:
+        """Reconciles the output with what is wanted (open, level, flush, close) and plays the scheduled audio. Every
+        call is bounded, an output that fails is retried with a backoff while the server keeps its connection, and nothing
+        here can stop the task that reads the server's messages."""
+        last_error_log = 0.0
         while True:
-            if self.artwork.waiting() and self.artwork.poll():
-                self._cover_changed()
-            self._flush_card()
-            if self.streaming:
-                try:
-                    await self._apply_actions(self.scheduler.poll())
-                    await self._apply_actions(self.scheduler.keepalive())
-                    if await self._decode_failed_too_often():
-                        continue
-                except SinkError as e:
-                    self._log(f"sendspin: audio output error: {e}")
-                    self._on_status("error", server_name=self.server_name, error=str(e))
-                    await asyncio.sleep(1)
-            due = self.scheduler.next_due_in_us() if self.streaming else None
+            try:
+                if self.artwork.waiting() and self.artwork.poll():
+                    self._cover_changed()
+                self._flush_card()
+                await self._reconcile_sink()
+                if self.streaming:
+                    if self._sink_ready:
+                        try:
+                            await asyncio.wait_for(self._playout(), WRITE_STALL_S)
+                        except asyncio.TimeoutError:
+                            await self._sink_failed("the audio output stopped taking audio", abort=True)
+                        except SinkError as e:
+                            await self._sink_failed(str(e))
+                        if await self._decode_failed_too_often():
+                            continue
+                    else:
+                        self.scheduler.discard_due()  # the output is down: what is due cannot play, the future audio is kept
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:  # noqa: BLE001 - a bug or an odd failure here must not end the session
+                if self._monotonic() - last_error_log > 30:
+                    last_error_log = self._monotonic()
+                    self._log(f"sendspin: audio task error: {e!r}")
+                await asyncio.sleep(1)
+            due = self.scheduler.next_due_in_us() if self.streaming and self._sink_ready else None
             await asyncio.sleep(POLL_INTERVAL_S if due is None else min(max(due / 1e6, 0.002), POLL_INTERVAL_S))
+
+    async def _playout(self) -> None:
+        await self._apply_actions(self.scheduler.poll())
+        await self._apply_actions(self.scheduler.keepalive())
+
+    async def _reconcile_sink(self) -> None:
+        now = self._monotonic()
+        if self._levels_dirty and now >= self._levels_retry_at:
+            await self._apply_levels(now)
+        want = self._want_fmt
+        if want is None:
+            if self._sink_fmt is not None or self._sink_ready:
+                await self._close_sink()
+            return
+        if self._sink_fmt != want:
+            if self._sink_fmt is not None:
+                await self._close_sink()
+            if now >= self._next_open_at:
+                await self._open_sink(want)
+            return
+        if self._flush_wanted:
+            self._flush_wanted = False
+            try:
+                await asyncio.wait_for(self.sink.flush(), OPEN_TOTAL_S)
+            except (SinkError, asyncio.TimeoutError) as e:
+                await self._sink_failed(f"flush failed: {e or 'timed out'}", abort=True)
+
+    async def _apply_levels(self, now: float) -> None:
+        """Volume and mute to the output. Bounded; a failure is retried later and never ends anything."""
+        self._levels_dirty = False
+        try:
+            ok = await asyncio.wait_for(self._set_levels(), LEVELS_BUDGET_S)
+        except (SinkError, asyncio.TimeoutError):
+            ok = False
+        if not ok:
+            self._levels_dirty = True
+            self._levels_retry_at = now + LEVEL_RETRY_S
+            self._log("sendspin: could not apply the volume to the audio output; trying again")
+
+    async def _set_levels(self) -> bool:
+        volume_ok = await self.sink.set_volume(self.volume)
+        mute_ok = await self.sink.set_mute(self.muted)
+        return bool(volume_ok and mute_ok)
+
+    async def _open_sink(self, want: tuple) -> None:
+        try:
+            await asyncio.wait_for(self.sink.open(*want[:3]), OPEN_TOTAL_S)
+        except (SinkError, asyncio.TimeoutError) as e:
+            await self._sink_failed(str(e) or f"opening the output took over {OPEN_TOTAL_S:g} s", abort=True)
+            return
+        self._sink_fmt, self._sink_ready = want, True
+        recovered, self._sink_down = self._sink_down, False
+        self._open_failures = 0
+        if recovered:
+            self._log("sendspin: the audio output is working again")
+        if self._want_fmt == want:  # not ended or replaced while it opened
+            self._on_status("streaming", server_name=self.server_name)
+            if self.player_active:
+                await self._send_state()
+
+    async def _sink_failed(self, reason: str, abort: bool = False) -> None:
+        """The output does not work: drop it, retry after a backoff, tell the server it is unavailable meanwhile."""
+        if abort:
+            self.sink.abort()  # leaves no half-open process behind (the sink may be in the middle of something)
+        self._sink_ready, self._sink_fmt = False, None
+        self._open_failures += 1
+        delay = OPEN_BACKOFF_S[min(self._open_failures - 1, len(OPEN_BACKOFF_S) - 1)]
+        self._next_open_at = self._monotonic() + delay
+        self._log(f"sendspin: audio output failed (attempt {self._open_failures}): {reason}; retrying in {delay:g} s")
+        if self._open_failures in (1, 5):
+            self._log(f"sendspin: audio output diagnostics: {self.sink.diagnostics()}")
+        first = not self._sink_down
+        self._sink_down = True
+        self._on_status("error", server_name=self.server_name, error=reason)
+        if first and self.player_active:
+            await self._send_state()  # available=false: the server knows the player cannot play right now
+
+    async def _close_sink(self) -> None:
+        self._sink_ready, self._sink_fmt = False, None
+        try:
+            await asyncio.wait_for(self.sink.close(), CLOSE_BUDGET_S)
+        except (SinkError, asyncio.TimeoutError, OSError):
+            self._log("sendspin: the audio output did not close in time; stopping it")
+            self.sink.abort()
 
     # --- ending ----------------------------------------------------------------------------------------------------------------
 
@@ -535,12 +658,17 @@ class SendspinSession:
             pass
 
     async def _finish(self) -> None:
+        """Tear everything down. The audio output is always released, even when this is itself cancelled (the plugin is being
+        unloaded and ran out of time): a `pw-cat` left behind would keep a stream on the audio server."""
+        cancelled = False
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
             try:
                 await task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - already reported through `ended`
+            except asyncio.CancelledError:
+                cancelled = cancelled or not task.cancelled()  # our own cancellation, not the task's
+            except Exception:  # noqa: BLE001 - already reported through `ended`
                 pass
         self.streaming = False
         self.scheduler.clear()
@@ -551,12 +679,20 @@ class SendspinSession:
             self._card_dirty = True
             self._flush_card(force=True)  # the final {active: false}
         try:
-            await self.sink.close()
-        except Exception:  # noqa: BLE001
+            await asyncio.wait_for(self.sink.close(), CLOSE_BUDGET_S)
+        except asyncio.CancelledError:
+            cancelled = True
+            self.sink.abort()
+        except Exception:  # noqa: BLE001 - includes the timeout: whatever is left of the output is killed at once
+            self.sink.abort()
+        try:
+            await asyncio.wait_for(wsproto.send_close(self._writer, 1000), 1.0)
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
             pass
         try:
-            await wsproto.send_close(self._writer, 1000)
             self._writer.close()
         except Exception:  # noqa: BLE001
             pass
         self._on_status("waiting", server_name=None)
+        if cancelled:
+            raise asyncio.CancelledError

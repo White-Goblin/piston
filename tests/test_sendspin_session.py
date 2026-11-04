@@ -186,7 +186,7 @@ class StreamTests(SessionTestCase):
         await self.play(h, n=1)
         await h.peer.send("stream/end", {})
         await h.wait_for(lambda: not h.sessions[0].streaming)
-        self.assertEqual(h.sink.events[-1], ("close",))
+        await h.wait_for(lambda: h.sink.events[-1] == ("close",))   # the audio task closes the output
         self.assertEqual(h.statuses[-1][0], "connected")
 
     async def test_stream_clear_discards_queued_audio_and_flushes_the_sink(self):
@@ -195,7 +195,7 @@ class StreamTests(SessionTestCase):
         await h.wait_for(lambda: h.sessions[0].scheduler.queued_bytes > 0)
         await h.peer.send("stream/clear", {"server_transmitted": h.peer.server_now()})
         await h.wait_for(lambda: h.sessions[0].scheduler.queued_bytes == 0)
-        self.assertIn(("flush",), h.sink.events)
+        await h.wait_for(lambda: ("flush",) in h.sink.events)
         self.assertTrue(set(h.sink.written) <= {0})                           # at most the keepalive silence, none of the queued audio
 
     async def test_silence_keeps_flowing_while_the_first_chunk_is_far_away_and_the_chunk_then_plays_on_time(self):
@@ -230,35 +230,95 @@ class StreamTests(SessionTestCase):
         await asyncio.wait_for(h.finished.wait(), 3)
         self.assertIn("protocol error", h.reasons[0])      # a flac stream was not offered and carries no valid header
 
-    async def test_a_sink_that_cannot_open_reports_an_error_and_keeps_the_connection(self):
+    async def test_a_sink_that_cannot_open_reports_an_error_keeps_the_connection_and_tells_the_server_it_is_unavailable(self):
         h = await self.harness()
         h.sink.fail_open = True
         await h.connect()
         await h.wait_for(lambda: h.sessions[0].clock.converged)
         await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
         await h.wait_for(lambda: h.statuses and h.statuses[-1][0] == "error")
-        self.assertFalse(h.sessions[0].streaming)
+        self.assertTrue(h.sessions[0].streaming)                               # the stream stays accepted while the output is retried
         self.assertFalse(h.finished.is_set())
+        state = None
+        while state is None or state["available"]:
+            _, state = await h.peer.next("client/state")
+        self.assertFalse(state["available"])                                   # the spec's only way to say the player cannot play
 
-    async def test_a_sink_that_fails_to_open_once_or_twice_is_retried(self):
+    async def test_a_sink_that_fails_to_open_once_or_twice_is_retried_and_the_server_is_told_it_is_available_again(self):
         h = await self.harness()
         h.sink.fail_open_times = 2
-        with mock.patch.object(sess, "OPEN_RETRY_S", 0.01):
+        with mock.patch.object(sess, "OPEN_BACKOFF_S", (0.01,)):
             await h.connect()
             await h.wait_for(lambda: h.sessions[0].clock.converged)
             await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
-            await h.wait_for(lambda: h.sessions[0].streaming)
-        self.assertEqual(h.statuses[-1][0], "streaming")
+            await h.wait_for(lambda: h.statuses[-1][0] == "streaming" and h.sink.opened)
         self.assertEqual(len([e for e in h.sink.events if e[0] == "open"]), 1)
+        state = None
+        while state is None or not state["available"] or "format" not in state["player"]:
+            _, state = await h.peer.next("client/state")
+        self.assertTrue(state["available"])
 
-    async def test_a_sink_that_never_opens_is_given_up_after_the_attempts(self):
+    async def test_a_sink_that_never_opens_is_retried_without_end_and_without_blocking_the_server_messages(self):
         h = await self.harness()
         h.sink.fail_open_times = 99
-        with mock.patch.object(sess, "OPEN_RETRY_S", 0.01):
+        with mock.patch.object(sess, "OPEN_BACKOFF_S", (0.01,)):
             await h.connect()
             await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
+            await h.wait_for(lambda: h.sink.fail_open_times < 95)             # it keeps trying
+            await h.peer.send("server/command", {"player": {"command": "volume", "volume": 31}})
+            await h.wait_for(lambda: {"volume": 31} in h.settings)             # and the read loop still answers
+        self.assertFalse(h.finished.is_set())
+
+    async def test_an_open_that_hangs_does_not_stop_the_session_from_reading_or_stopping(self):
+        h = await self.harness()
+        gate = asyncio.Event()
+
+        async def hang(rate, channels=2, bits=16):
+            await gate.wait()
+
+        h.sink.open = hang
+        with mock.patch.object(sess, "OPEN_TOTAL_S", 0.2), mock.patch.object(sess, "OPEN_BACKOFF_S", (5,)):
+            await h.connect()
+            await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
+            await h.peer.send("server/command", {"player": {"command": "volume", "volume": 12}})
+            await h.wait_for(lambda: {"volume": 12} in h.settings, timeout=1)  # handled at once, not after the open gave up
             await h.wait_for(lambda: h.statuses and h.statuses[-1][0] == "error")
-        self.assertEqual(h.sink.fail_open_times, 99 - sess.OPEN_ATTEMPTS)
+            await h.peer.send("stream/end", {})
+            await h.wait_for(lambda: not h.sessions[0].streaming)
+        self.assertFalse(h.finished.is_set())
+
+    async def test_an_output_that_stops_taking_audio_is_replaced_and_audio_continues(self):
+        h = await self.harness()
+        stuck = {"on": True}
+        real_write = h.sink.write
+
+        async def write(pcm):
+            if stuck["on"]:
+                await asyncio.sleep(60)
+            return await real_write(pcm)
+
+        h.sink.write = write
+        with mock.patch.object(sess, "WRITE_STALL_S", 0.1), mock.patch.object(sess, "OPEN_BACKOFF_S", (0.01,)):
+            base = await self.play(h, n=5, lead_us=300_000)
+            await h.wait_for(lambda: h.sessions[0]._sink_down, timeout=3)
+            stuck["on"] = False
+            await h.wait_for(lambda: not h.sessions[0]._sink_down and h.sessions[0]._sink_ready, timeout=3)
+        self.assertFalse(h.finished.is_set())
+
+    async def test_closing_an_output_that_hangs_is_bounded_and_it_is_aborted(self):
+        h = await self.harness()
+        await self.play(h, n=1)
+
+        async def hang():
+            await asyncio.sleep(60)
+
+        h.sink.close = hang
+        aborted = []
+        h.sink.abort = lambda: aborted.append(True)
+        with mock.patch.object(sess, "CLOSE_BUDGET_S", 0.1):
+            await h.peer.send("stream/end", {})
+            await h.wait_for(lambda: aborted, timeout=2)
+        self.assertFalse(h.finished.is_set())
 
     async def test_late_audio_is_dropped_and_counted(self):
         h = await self.harness()
@@ -276,7 +336,7 @@ class CommandTests(SessionTestCase):
         await h.connect()
         await self.command(h, command="volume", volume=20)
         await h.wait_for(lambda: {"volume": 20} in h.settings)
-        self.assertEqual(h.sink.volume, 20)
+        await h.wait_for(lambda: h.sink.volume == 20)                           # applied by the audio task
         while (await h.peer.next("client/state"))[1]["player"]["volume"] != 20:
             pass
 
@@ -286,7 +346,8 @@ class CommandTests(SessionTestCase):
         await self.command(h, command="mute", mute=True)
         await self.command(h, command="set_output_delay", output_delay_ms=250)
         await h.wait_for(lambda: {"output_delay_ms": 250} in h.settings)
-        self.assertEqual((h.sink.muted, h.sessions[0].scheduler.output_delay_us), (True, 250_000))
+        await h.wait_for(lambda: h.sink.muted is True)
+        self.assertEqual(h.sessions[0].scheduler.output_delay_us, 250_000)
         self.assertIn({"muted": True}, h.settings)
 
     async def test_an_out_of_range_command_ends_the_session(self):
@@ -312,7 +373,7 @@ class EndingTests(SessionTestCase):
         h = await self.harness()
         await h.connect()
         await h.peer.send("stream/start", {"server_transmitted": 1, "player": FMT48})
-        await h.wait_for(lambda: h.sessions[0].streaming)
+        await h.wait_for(lambda: h.sessions[0].streaming and h.sink.opened)
         h.peer.pump.cancel()
         h.peer.ws.close()
         await asyncio.wait_for(h.finished.wait(), 3)

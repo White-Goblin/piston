@@ -67,6 +67,19 @@ class ProtocolServer:
         self.port = self._server.sockets[0].getsockname()[1]
         log.info("protocol server listening on %s:%s", self.host, self.port)
 
+    def abort(self) -> None:
+        """Synchronous stop (no waiting, never raises): stop listening and drop the connections."""
+        if self._server is not None:
+            self._server.close()
+        for conn in {id(c): c for c in (self.conn, self.update_conn) if c is not None}.values():
+            if not conn.closed:
+                wsproto.send_close_now(conn.writer, 1001, "going away")
+            conn.closed = True
+            try:
+                conn.writer.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     async def stop(self) -> None:
         if self._server is not None:
             self._server.close()

@@ -29,6 +29,7 @@ class SendspinMixin:
         self._sendspin_save_handle = None
         self._sendspin_lock = asyncio.Lock()
         self._sendspin_tasks = set()  # emits in flight
+        self._sendspin_stopping = (None, None)
         self.sendspin_asleep = False  # between the sleep announcement and the resume refresh the player stays down
 
     # --- state group -----------------------------------------------------------------------------------------------------------
@@ -172,13 +173,29 @@ class SendspinMixin:
         async with self._sendspin_lock:
             advertiser, listener = self.sendspin_advertiser, self.sendspin_listener
             self.sendspin_advertiser = self.sendspin_listener = None
-            if advertiser is not None:
-                await advertiser.stop()
-            if listener is not None:
-                await listener.stop(reason)
+            self._sendspin_stopping = (advertiser, listener)  # what an abort has to kill if this does not finish
+            try:
+                if advertiser is not None:
+                    await advertiser.stop()
+                if listener is not None:
+                    await listener.stop(reason)
+            finally:
+                self._sendspin_stopping = (None, None)
             self._sendspin_flush_settings()
         if push:
             self._push_sendspin()
+
+    def _sendspin_abort(self) -> None:
+        """Synchronous stop for an unload (see Plugin._unload_now): kill the audio output, close the connections and withdraw the
+        mDNS record without waiting for anything; also what an interrupted `_sendspin_stop` still had open."""
+        stopping_advertiser, stopping_listener = getattr(self, "_sendspin_stopping", (None, None))
+        for holder in (self.sendspin_listener, stopping_listener, self.sendspin_advertiser, stopping_advertiser):
+            if holder is not None:
+                try:
+                    holder.abort()
+                except Exception as e:  # noqa: BLE001
+                    decky.logger.warning(f"Sendspin abort failed: {e!r}")
+        self.sendspin_listener = self.sendspin_advertiser = None
 
     # --- settings written by the server ------------------------------------------------------------------------------------------
 

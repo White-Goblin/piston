@@ -1,6 +1,6 @@
 {
   "name": "piston",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Decky companion plugin for the Piston integration: pairing, app list, toasts, PiP and device control",
   "type": "module",
   "scripts": {

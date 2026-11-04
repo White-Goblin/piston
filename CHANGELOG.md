@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3 and changes nothing in Home Assistant itself.
+
+### Added
+- **FLAC and Opus for the Sendspin player.** The device now offers FLAC (16 and 24-bit, 44.1 and 48 kHz), PCM and Opus (48 kHz). Music Assistant picks the first format it can use, normally FLAC, which uses much less network than raw audio. A codec whose library does not load or fails its start-up self-test is simply not offered, and PCM always works.
+- **A media card on the device.** While Music Assistant plays music on the device, a card shows the cover, title, artist and a progress bar, with previous, play/pause and next buttons and a volume slider for this device's player volume (the value Music Assistant shows for it, not the system volume). It is a new **Piston** tab in Steam's Quick Access menu, next to the Decky tab; if the tab cannot be added (for example after a Decky update), the card is shown at the top of the Piston plugin panel instead. It is empty while nothing plays and works with the controller. See the README section "Media card".
+
+### Fixed (hardening of the Sendspin player)
+- **The player no longer depends on the audio server answering.** Opening and controlling the audio output now happens in a task of its own with short time limits, so a PipeWire audio server that stops responding can no longer freeze the player's connection to Music Assistant (before, skipping or pausing could be ignored for about half a minute per track). If the output cannot be opened the player keeps the stream, retries with a growing delay (0.5 s up to 30 s), tells Music Assistant it is unavailable meanwhile, and plays on by itself when the output comes back. A `pactl` call that does not answer is killed instead of being left behind, a stalled output is replaced, and the log records what the audio processes were doing.
+- **Unloading the plugin is immediate and leaves nothing behind.** Decky's plugin runner stops running the plugin's event loop right after it asks the plugin to unload, so the old unload could never finish and Decky killed the plugin after five seconds every time (a `gdbus monitor` helper was then left running for good, one per restart). The plugin now does all of its cleanup synchronously in the first moment of the unload: it saves a pending volume, says goodbye to Music Assistant and Home Assistant, withdraws its mDNS records, kills the audio output and its helper processes. It stops in about 0.1 s, and at start it also stops helpers that earlier runs left behind.
+
+### Notes
+- Still not supported: pairing, and lowering the game's sound during an announcement (Music Assistant gives the device no signal for it).
+- The Quick Access tab relies on Decky Loader internals and is guarded: if it fails, the card moves to the plugin panel and nothing else is affected.
+
 ## 0.6.0
 
 **Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3.

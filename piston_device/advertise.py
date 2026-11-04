@@ -78,6 +78,18 @@ class Advertiser:
             await self._adv.refresh(**txt)
             self._txt = txt
 
+    def abort(self) -> None:
+        """Synchronous stop (no waiting, never raises): the plugin is unloading and its event loop may not run any more."""
+        if self._task:
+            self._task.cancel()
+        adv, self._adv, self._ip_now, self._port_now = self._adv, None, None, None
+        abort = getattr(adv, "abort", None)
+        if abort is not None:
+            try:
+                abort()
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _stop(self) -> None:
         adv, self._adv, self._ip_now, self._port_now = self._adv, None, None, None
         if adv is not None:

@@ -335,3 +335,20 @@ class DecodeAtReleaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class DiscardDueTests(unittest.TestCase):
+    def test_due_chunks_are_dropped_without_decoding_and_future_ones_stay(self):
+        calls = []
+        t = [10_000_000]
+        s = Scheduler(lambda ts: ts - 1_000_000, lambda: t[0], rate=48000, frame_bytes=4, capacity_bytes=100_000,
+                      decode=lambda b: calls.append(b) or b)
+        s.submit(1_000_000 + 9_000_000, b"a" * 100)          # in the past
+        s.submit(1_000_000 + 9_500_000, b"b" * 100)          # in the past
+        s.submit(1_000_000 + 20_000_000, b"c" * 100)         # ten seconds ahead
+        self.assertEqual(s.discard_due(), 2)
+        self.assertEqual(s.queued_bytes, 100)
+        self.assertEqual(calls, [])                           # nothing was decoded
+        self.assertEqual(s.discard_due(), 0)
+        t[0] = 19_900_000                                     # shortly before it is due
+        actions = s.poll()
+        self.assertTrue(any(type(a).__name__ == "Write" for a in actions))  # the future chunk still plays when its time comes

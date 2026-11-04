@@ -168,29 +168,46 @@ class Plugin(
         await self._sendspin_boot()
         await self._start_lifecycle()
 
-    async def _unload(self):
-        decky.logger.info("Piston unloading")
-        # Decky may unload a plugin that is still starting (an install right after a start): only stop what exists
+    def _unload_now(self) -> None:
+        """Everything that has to happen when the plugin goes away, synchronously: no await, so it completes even when the
+        event loop is starved. Decky sends the unload request and then closes its socket, and the loop that reads it spins on
+        the closed socket without ever yielding, so after the first moment nothing that needs the loop (a timer, a subprocess
+        wait, a goodbye message) gets to run until Decky gives up after five seconds and kills the process. Whatever is
+        not done here is left to the kernel: helper processes such as `gdbus monitor` would otherwise outlive the plugin."""
         for name in ("sensor_task", "audio_task", "device_task", "session_task", "resume_task", "playback_task",
                      "update_task", "update_confirm_task", "update_approval_task"):
             task = getattr(self, name, None)
             if task is not None:
                 task.cancel()
-        if getattr(self, "lifecycle", None) is not None:
-            await self._stop_lifecycle()
-        if getattr(self, "sendspin_listener", None) is not None or getattr(self, "sendspin_advertiser", None) is not None:
-            await self._sendspin_stop(push=False)
-        advertiser = getattr(self, "advertiser", None)
-        if advertiser is not None:
-            await advertiser.stop()
-        server = getattr(self, "server", None)
-        if server is not None:
-            await server.stop()
+        try:
+            self._sendspin_flush_settings()  # a volume change still waiting for its two quiet seconds (synchronous file write)
+        except Exception as e:  # noqa: BLE001
+            decky.logger.warning(f"Piston unload: could not save the Sendspin level: {e!r}")
+        for name, stop in (("sendspin", getattr(self, "_sendspin_abort", None)), ("lifecycle", self._abort_lifecycle),
+                           ("advertiser", getattr(getattr(self, "advertiser", None), "abort", None)),
+                           ("server", getattr(getattr(self, "server", None), "abort", None))):
+            if stop is None:
+                continue
+            try:
+                stop()
+            except Exception as e:  # noqa: BLE001 - one failing stop must not keep the others from running
+                decky.logger.warning(f"Piston unload: {name} abort failed: {e!r}")
         if getattr(self, "keyboard", None) is not None:
             self._close_keyboard()
         http_server = getattr(self, "http_server", None)
         if http_server is not None:
             http_server.close()
+
+    def _abort_lifecycle(self) -> None:
+        lifecycle = getattr(self, "lifecycle", None)
+        if lifecycle is not None:
+            lifecycle.abort()
+
+    async def _unload(self):
+        decky.logger.info("Piston unloading")
+        # Decky may unload a plugin that is still starting (an install right after a start): only stop what exists
+        self._unload_now()
+        decky.logger.info("Piston unloaded")
 
     async def _uninstall(self):
         decky.logger.info("Piston uninstalled")

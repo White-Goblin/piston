@@ -121,6 +121,22 @@ class Scheduler:
             self.cursor_us = cursor + self._us(frames)
         return actions
 
+    def discard_due(self) -> int:
+        """Drop the queued chunks that have come due without decoding them (the audio output is down, so they could not be
+        played anyway); chunks that are still in the future stay, so audio resumes where the server is when the output
+        comes back. Returns how many were dropped."""
+        dropped = 0
+        while self._queue:
+            ts, pcm = self._queue[0]
+            if self._target(ts) - self.latency_us - self.lookahead_us > self._now():
+                break
+            self._queue.popleft()
+            self._queued_bytes -= len(pcm)
+            dropped += 1
+        if dropped:
+            self.cursor_us = None
+        return dropped
+
     def keepalive(self, min_fill_us: int = 10_000) -> list:
         """Silence that keeps the sink fed while nothing is due, as far ahead as the release window (latency + lookahead)
         but never past the next queued chunk's play time. A starved sink has real consequences: `pw-cat` blocks on an empty

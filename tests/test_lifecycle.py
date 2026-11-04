@@ -1,5 +1,8 @@
 import asyncio
+import os
+import tempfile
 import unittest
+from unittest import mock
 
 from piston_device import lifecycle
 from piston_device.lifecycle import Lifecycle
@@ -74,7 +77,7 @@ class Harness:
             return "restart" if getattr(self, "restart", False) else "shutdown"
 
         self.lc = Lifecycle(on_sleep=on_sleep, on_shutdown=on_shutdown, on_resume=on_resume, spawn=spawn,
-                            sleep=fake_sleep, reason=reason, **kw)
+                            sleep=fake_sleep, reason=reason, reap=lambda: 0, **kw)  # never reap the machine the tests run on
 
     @property
     def held(self):
@@ -297,3 +300,64 @@ class LifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AbortTests(unittest.IsolatedAsyncioTestCase):
+    async def test_abort_kills_the_monitor_and_the_inhibitor_at_once_without_awaiting(self):
+        h = Harness()
+        lc = h.lc
+        await lc.start()
+        for _ in range(50):
+            await asyncio.sleep(0)
+            if h.monitors and h.inhibitors:
+                break
+        monitor, inhibitor = h.monitors[0], h.inhibitors[0]
+        lc.abort()                                   # a plain call: no await, as in a starved event loop
+        self.assertTrue(monitor.killed and inhibitor.killed)
+        self.assertFalse(lc.active)
+        lc.abort()                                   # twice is fine
+        await lc.stop()
+
+    async def test_start_reaps_the_orphans_of_an_earlier_run_once(self):
+        reaped = []
+        h = Harness()
+        h.lc._reap = lambda: reaped.append(1) or 0
+        await h.lc.start()
+        await h.lc.stop()
+        self.assertEqual(reaped, [1])
+
+    async def test_abort_before_start_is_harmless(self):
+        Harness().lc.abort()
+
+
+class ReapOrphansTests(unittest.TestCase):
+    def make(self, root, pid, argv, ppid, uid=None):
+        d = os.path.join(root, str(pid))
+        os.mkdir(d)
+        with open(os.path.join(d, "cmdline"), "wb") as f:
+            f.write(b"\0".join(a.encode() for a in argv) + b"\0")
+        with open(os.path.join(d, "stat"), "w") as f:
+            f.write(f"{pid} (gdbus) S {ppid} 1 1 0 -1\n")
+
+    def test_only_our_orphaned_monitors_are_stopped(self):
+        monitor = list(lifecycle.MONITOR_ARGV)
+        with tempfile.TemporaryDirectory() as root:
+            self.make(root, 101, monitor, 1)                                   # orphaned: reaped
+            self.make(root, 102, monitor, 4242)                                # has a living parent (a running plugin): kept
+            self.make(root, 103, ["gdbus", "monitor", "--session"], 1)          # another command line: kept
+            self.make(root, 104, ["sleep", "5"], 1)
+            os.mkdir(os.path.join(root, "notapid"))
+            with mock.patch("os.kill") as kill:
+                self.assertEqual(lifecycle.reap_orphans(root), 1)
+            kill.assert_called_once_with(101, mock.ANY)
+
+    def test_another_users_process_is_never_touched(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.make(root, 201, list(lifecycle.MONITOR_ARGV), 1)
+            with mock.patch("os.kill") as kill:
+                self.assertEqual(lifecycle.reap_orphans(root, own_uid=os.getuid() + 1), 0)
+            kill.assert_not_called()
+
+    def test_a_missing_or_unreadable_proc_directory_is_not_an_error(self):
+        self.assertEqual(lifecycle.reap_orphans("/nonexistent-proc"), 0)
+

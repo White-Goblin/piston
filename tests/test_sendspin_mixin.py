@@ -505,3 +505,46 @@ class CardTests(PluginCase):
         peer.close()
         await self.until(lambda: not self.card_events()[-1]["active"])
         self.assertEqual(await self.plugin.get_sendspin_card(), {"active": False})
+
+
+class UnloadTests(PluginCase):
+    async def test_the_unload_kills_the_audio_output_and_the_helpers_without_awaiting_anything(self):
+        """Decky's plugin-side socket loop spins without yielding once the loader closed its end, so the loop that runs
+        `_unload` is starved: everything essential has to happen before its first await."""
+        sinks = []
+
+        def make(**kw):
+            sink = FakeSink()
+            sinks.append(sink)
+            return sink
+
+        with mock.patch.object(sendspin_mixin, "PipeWireSink", make):
+            await self.boot()
+            peer = FakeServer()
+            await peer.connect(self.plugin.sendspin_listener.port)
+            await peer.handshake()
+            await peer.hello_and_activate()
+            peer.start_pump()
+            self.addCleanup(peer.close)
+            await self.until(lambda: self.group()["status"] == "connected")
+            await peer.send("stream/start", {"server_transmitted": 1, "player": {"codec": "pcm", "sample_rate": 48000, "channels": 2, "bit_depth": 16}})
+            await self.until(lambda: sinks and sinks[0].opened)
+            lifecycle = self.plugin.lifecycle
+            coroutine = self.plugin._unload()
+            try:
+                coroutine.send(None)                                 # run only up to its first suspension
+            except StopIteration:
+                pass
+            self.assertIn(("abort",), sinks[0].events)               # the audio output is gone
+            self.assertTrue(lifecycle.aborted)                       # the helper processes were told to die
+            self.assertIsNone(self.plugin.sendspin_listener.current if self.plugin.sendspin_listener else None)
+
+    async def test_one_failing_abort_does_not_keep_the_others_from_running(self):
+        await self.boot()
+        calls = []
+        self.plugin.advertiser.abort = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        self.plugin.server.abort = lambda: calls.append("server")
+        with self.assertLogs("decky-test", "WARNING") as logs:
+            self.plugin._unload_now()
+        self.assertEqual(calls, ["server"])
+        self.assertTrue(any("advertiser abort failed" in m for m in logs.output))

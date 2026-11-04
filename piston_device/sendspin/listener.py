@@ -66,6 +66,18 @@ class SendspinListener:
                   error=f"no free port from {self._start_port} to {self._start_port + self._tries - 1}" if self._start_port else f"cannot listen: {last}")
         return False
 
+    def abort(self, reason: str = "shutdown") -> None:
+        """Synchronous last resort for an unload that ran out of time: kill every audio output now and cancel the connections."""
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+        for task in list(self._tasks):
+            session = getattr(task, "session", None)
+            if session is not None:
+                session.abort(reason)
+            task.cancel()
+        self.current = None
+
     async def stop(self, reason: str = "shutdown") -> None:
         server, self._server = self._server, None
         if server is not None:
@@ -80,7 +92,10 @@ class SendspinListener:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
         if server is not None:
-            await server.wait_closed()
+            try:
+                await asyncio.wait_for(server.wait_closed(), 1.0)
+            except asyncio.TimeoutError:
+                pass
         self.current = None
         self.port = 0
         self._set(status="stopped", server_name=None, error=None)

@@ -72,7 +72,7 @@ The player page runs in a Steam browser view and holds no Home Assistant credent
 
 ## Sendspin player
 
-The plugin can also run a Sendspin player for Music Assistant. That is a separate protocol on its own port (default 8928, mDNS `_sendspin._tcp`, Noise-encrypted websocket, player role, PCM); the integration is not involved in the audio. The Piston protocol only carries its status and its enable setting, and needs no version change because both are additive:
+The plugin can also run a Sendspin player for Music Assistant. That is a separate protocol on its own port (default 8928, mDNS `_sendspin._tcp`, Noise-encrypted websocket; roles player (PCM, FLAC, Opus), metadata, artwork and controller); the integration is not involved in the audio. The metadata, cover and controller roles feed the media card on the device, which the plugin delivers to the Steam interface itself (the `sendspin_card` frontend event and callables, and a loopback cover route), so none of it is part of the Piston protocol. The Piston protocol only carries its status and its enable setting, and needs no version change because both are additive:
 
 - State group `sendspin`: `{enabled, status, name, port?, server_name?, error?}` with `status` one of `disabled`, `waiting`, `connected`, `streaming`, `error`. It is live state: the integration does not store or restore it, drops it when the device announces a sleep, and creates its switch and sensor only for devices that report it.
 - Command `sendspin_enable {enabled}` turns the player on or off and persists the setting on the device; bad data is `bad_request`. The integration sends it only to devices that reported the group.

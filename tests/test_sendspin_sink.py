@@ -1,6 +1,8 @@
 import asyncio
 import json
+import os
 import unittest
+from unittest import mock
 
 from piston_device.sendspin import sink as sk
 from piston_device.sendspin.sink import FakeSink, PipeWireSink, SinkError, pulse_percent
@@ -397,6 +399,96 @@ class FakeSinkTests(unittest.IsolatedAsyncioTestCase):
         f.accept_writes = False
         self.assertFalse(await f.write(b"x"))
         self.assertFalse(f.alive)
+
+class FaultToleranceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_pactl_that_hangs_ends_the_open_within_the_budget_and_leaves_nothing_behind(self):
+        env = Env()
+
+        async def hang(*args):
+            await asyncio.sleep(30)
+
+        s = PipeWireSink(spawn=env.spawn, pactl=hang, clock=env.clock, sleep=env.sleep)
+        with mock.patch.object(sk, "PACTL_TIMEOUT_S", 0.05):
+            with self.assertRaises(SinkError):
+                await asyncio.wait_for(s.open(48000), 2)
+        self.assertFalse(s.alive)
+        self.assertTrue(env.procs[0].killed or env.procs[0].stdin.closed)
+        self.assertIsNone(s._format)                                            # nothing half-open: later writes are dropped
+        self.assertFalse(await s.write(b"\0" * 8))
+
+    async def test_a_cancelled_open_kills_the_stream_process(self):
+        env = Env()
+        started = asyncio.Event()
+
+        async def hang(*args):
+            started.set()
+            await asyncio.sleep(30)
+
+        s = PipeWireSink(spawn=env.spawn, pactl=hang, clock=env.clock, sleep=env.sleep)
+        task = asyncio.create_task(s.open(48000))
+        await started.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(env.procs[0].killed)
+        self.assertFalse(s.alive)
+
+    async def test_abort_kills_at_once_without_waiting_and_is_safe_twice_or_when_closed(self):
+        env = Env()
+        s = env.sink()
+        s.abort()                                                               # nothing open
+        await s.open(48000)
+        proc = env.procs[0]
+        s.abort()
+        self.assertTrue(proc.killed and proc.stdin.closed)
+        self.assertFalse(s.alive)
+        s.abort()
+        self.assertFalse(await s.write(b"\0" * 4))
+
+    async def test_a_hung_pactl_process_is_killed_and_reaped(self):
+        spawned = []
+        real = asyncio.create_subprocess_exec
+
+        async def fake_exec(*args, **kwargs):
+            proc = await real("sleep", "30", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            spawned.append(proc)
+            return proc
+
+        with mock.patch.object(sk.asyncio, "create_subprocess_exec", fake_exec), mock.patch.object(sk, "PACTL_TIMEOUT_S", 0.1):
+            with self.assertRaises(SinkError) as cm:
+                await sk._run_pactl("-f", "json", "list", "sink-inputs")
+        self.assertIn("timed out", str(cm.exception))
+        self.assertIsNotNone(spawned[0].returncode)                             # killed and reaped, no pactl left to pile up on a hung server
+
+    async def test_a_cancelled_pactl_is_killed_too(self):
+        spawned = []
+        real = asyncio.create_subprocess_exec
+
+        async def fake_exec(*args, **kwargs):
+            proc = await real("sleep", "30", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            spawned.append(proc)
+            return proc
+
+        with mock.patch.object(sk.asyncio, "create_subprocess_exec", fake_exec):
+            task = asyncio.create_task(sk._run_pactl("list"))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+        self.assertIsNotNone(spawned[0].returncode)
+
+    async def test_diagnostics_describe_the_processes_and_never_raise(self):
+        env = Env()
+        s = env.sink()
+        text = s.diagnostics()
+        self.assertIn("pactl", text)
+        FakeProc_pid = type("P", (), {"pid": os.getpid(), "returncode": None})()
+        s._proc = FakeProc_pid
+        self.assertIn(f"pid {os.getpid()}", s.diagnostics())
+        s._proc = type("P", (), {"pid": 2_000_000_000, "returncode": None})()
+        self.assertIsInstance(s.diagnostics(), str)                             # a vanished process is not an error
+        self.assertEqual(FakeSink().diagnostics(), "")
+
 
 
 if __name__ == "__main__":

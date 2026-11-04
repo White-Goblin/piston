@@ -267,3 +267,39 @@ class SendspinAdvertiserTests(unittest.IsolatedAsyncioTestCase):
         for needle in (b"_sendspin", b"path=/sendspin", b"name=Box", b"C" * 43):
             self.assertIn(needle, packet)
         self.assertLess(len("C" * 43), 64)                                       # fits in one DNS label
+
+
+class AbortTests(unittest.IsolatedAsyncioTestCase):
+    async def test_abort_is_synchronous_and_stops_the_low_level_advertiser(self):
+        events = []
+
+        class Low(FakeLow):
+            def abort(self):
+                events.append("abort")
+
+        adv = Advertiser(lambda: {"device_id": "abc123", "name": "box", "paired": False}, 47830, lambda: "10.0.0.2", Low)
+        adv.abort()                                   # nothing running: harmless
+        await adv.sync()
+        self.assertTrue(adv.advertising)
+        adv.abort()
+        self.assertEqual(events, ["abort"])
+        self.assertFalse(adv.advertising)
+
+    async def test_the_mdns_abort_sends_the_goodbye_and_closes_the_socket_without_awaiting(self):
+        low = mdns.MdnsAdvertiser("_x._tcp.local.", "inst", "host.local.", 1, "10.0.0.2", {})
+        sent = []
+
+        class Sock:
+            def sendto(self, data, addr):
+                sent.append(data)
+
+            def close(self):
+                sent.append("closed")
+
+        low.sock = Sock()
+        low.abort()
+        self.assertEqual(sent[-1], "closed")
+        self.assertEqual(sent[0], low._packet(0))      # TTL 0: a goodbye
+        self.assertIsNone(low.sock)
+        low.abort()                                    # twice is fine
+

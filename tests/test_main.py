@@ -34,11 +34,9 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(lifecycle.started)
         self.assertIs(self.plugin.lifecycle, lifecycle)
         self.assertFalse(lifecycle.stopped)
-        with mock.patch.object(self.plugin, "_stop_lifecycle", wraps=self.plugin._stop_lifecycle) as stop:
-            await self.plugin._unload()
-            await self.plugin._unload()            # the cleanup unloads again later; that must stay harmless
-        self.assertEqual(stop.await_count, 2)
-        self.assertTrue(lifecycle.stopped)
+        await self.plugin._unload()                # synchronous inside: the loop may be starved (see Plugin._unload_now)
+        await self.plugin._unload()                # the cleanup unloads again later; that must stay harmless
+        self.assertTrue(lifecycle.aborted)
 
     async def test_lifecycle_callbacks_send_the_events_to_the_integration(self):
         (lifecycle,) = StubLifecycle.instances

@@ -19,7 +19,8 @@ import time
 LATENCY_US = 50_000  # requested stream latency; the scheduler assumes this much between a write and the sound
 NODE_WAIT_S = 6.0  # generous: the first start after a wake or a plugin restart can be slow (seen on the device)
 NODE_POLL_S = 0.05
-PACTL_TIMEOUT_S = 8.0
+OPEN_BUDGET_S = 8.0  # the whole of open(): spawn, find the stream, apply the level
+PACTL_TIMEOUT_S = 3.0  # a healthy pactl call takes about 10 ms; a hung audio server must never hold us long
 RESTART_BACKOFF_S = (0.5, 1, 2, 5, 10)
 RUNTIME_DIR = f"/run/user/{os.getuid()}" if os.getuid() else "/run/user/1000"
 SILENCE_CHUNK_MS = 20
@@ -71,6 +72,13 @@ class Sink:
 
     async def close(self) -> None:
         raise NotImplementedError
+
+    def abort(self) -> None:
+        """Synchronous, best-effort stop for a plugin that is being unloaded: no waiting, never raises."""
+
+    def diagnostics(self) -> str:
+        """A short description of the output's processes for the log when it stops answering (never raises)."""
+        return ""
 
 
 class FakeSink(Sink):
@@ -131,16 +139,34 @@ class FakeSink(Sink):
             self.events.append(("close",))
         self.opened = False
 
+    def abort(self):
+        self.events.append(("abort",))
+        self.opened = False
+
 
 async def _run_pactl(*args: str) -> str:
+    """Run pactl for at most PACTL_TIMEOUT_S seconds. A pactl that does not answer is killed and reaped (a hung client left behind
+    would pile up on an audio server that is already struggling)."""
+    limit = PACTL_TIMEOUT_S
     env = {**os.environ, "XDG_RUNTIME_DIR": RUNTIME_DIR}
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec("pactl", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, env=env)
-        out, err = await asyncio.wait_for(proc.communicate(), PACTL_TIMEOUT_S)
+        out, err = await asyncio.wait_for(proc.communicate(), limit)
     except asyncio.TimeoutError:
-        raise SinkError(f"pactl {' '.join(args[:3])} timed out after {PACTL_TIMEOUT_S:g} s") from None
+        raise SinkError(f"pactl {' '.join(args[:3])} timed out after {limit:g} s") from None
     except OSError as e:
         raise SinkError(f"pactl could not run: {type(e).__name__}: {e}") from None
+    finally:
+        if proc is not None and proc.returncode is None:  # timed out or cancelled
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.wait_for(proc.wait(), 1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
     if proc.returncode != 0:
         raise SinkError(f"pactl exited with {proc.returncode}: {err.decode(errors='replace').strip()[:200]}")
     return out.decode()
@@ -165,13 +191,24 @@ class PipeWireSink(Sink):
         self._last_start = 0.0
         self._next_restart = 0.0
         self._env = {**os.environ, "XDG_RUNTIME_DIR": RUNTIME_DIR}
+        self._deadline = None  # monotonic time by which the current open() must be done
         self.error = None
 
     async def _pactl(self, *args: str) -> str:
-        """Run pactl; a call that is slow (over half a second) or fails is logged with its time, to diagnose the device."""
+        """Run pactl; a call that is slow (over half a second) or fails is logged with its time, to diagnose the device.
+        During `open()` no call may run past the open deadline."""
         started = self._clock()
         try:
-            out = await self._raw_pactl(*args)
+            if self._deadline is not None:
+                remaining = self._deadline - started
+                if remaining <= 0.05:
+                    raise SinkError("the audio output did not answer in time")
+                try:
+                    out = await asyncio.wait_for(self._raw_pactl(*args), min(PACTL_TIMEOUT_S, remaining))
+                except asyncio.TimeoutError:
+                    raise SinkError(f"pactl {' '.join(args[:3])} did not answer within the open budget") from None
+            else:
+                out = await self._raw_pactl(*args)
         except SinkError as e:
             self._log(f"sendspin: pactl {' '.join(args[:3])} failed after {self._clock() - started:.2f} s: {e}")
             raise
@@ -195,7 +232,14 @@ class PipeWireSink(Sink):
         await self.close()
         self._format = (rate, channels, bits)
         self._failures = 0
-        await self._start()
+        self._deadline = self._clock() + OPEN_BUDGET_S
+        try:
+            await self._start()
+        except BaseException:
+            self._format = None  # a failed open leaves nothing half-open: later writes are dropped
+            raise
+        finally:
+            self._deadline = None
 
     async def _start(self) -> None:
         rate, channels, bits = self._format
@@ -227,6 +271,10 @@ class PipeWireSink(Sink):
             await self._kill()
             self.error = reason or "audio stream did not start"
             raise SinkError(self.error) from None
+        except BaseException:  # cancelled (the session ended or the stream changed): leave no process behind
+            feeder.cancel()
+            self.abort()
+            raise
         await self._stop_feeder(feeder)
         self.error = None
 
@@ -249,6 +297,8 @@ class PipeWireSink(Sink):
 
     async def _find_stream(self) -> None:
         deadline = self._clock() + NODE_WAIT_S
+        if self._deadline is not None:
+            deadline = min(deadline, self._deadline)
         while True:
             if not self.alive:
                 raise SinkError(await self._exit_reason())
@@ -298,6 +348,51 @@ class PipeWireSink(Sink):
     async def close(self) -> None:
         self._format = None  # an explicit close: later writes are dropped, never restarted
         await self._kill()
+
+    def abort(self) -> None:
+        """Kill the stream process at once, without waiting (the plugin is being unloaded or an open was cancelled)."""
+        self._format = None
+        proc, self._proc, self._index = self._proc, None, None
+        if proc is None:
+            return
+        try:
+            if proc.stdin and not proc.stdin.is_closing():
+                proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if proc.returncode is None:
+                proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def diagnostics(self) -> str:
+        """For the log when the audio server stops answering: our stream process and how many pactl/pw-cat processes exist."""
+        try:
+            parts = []
+            pid = getattr(self._proc, "pid", None)
+            if pid:
+                with open(f"/proc/{pid}/stat") as f:
+                    parts.append(f"our pw-cat pid {pid} state {f.read().rsplit(')', 1)[1].split()[0]}")
+                try:
+                    with open(f"/proc/{pid}/wchan") as f:
+                        parts.append(f"waiting in {f.read().strip() or '-'}")
+                except OSError:
+                    pass
+            counts = {"pactl": 0, "pw-cat": 0}
+            for entry in os.listdir("/proc"):
+                if entry.isdigit():
+                    try:
+                        with open(f"/proc/{entry}/comm") as f:
+                            name = f.read().strip()
+                    except OSError:
+                        continue
+                    if name in counts:
+                        counts[name] += 1
+            parts.append(f"{counts['pactl']} pactl and {counts['pw-cat']} pw-cat processes running")
+            return "; ".join(parts)
+        except Exception as e:  # noqa: BLE001 - diagnostics must never become a problem
+            return f"diagnostics failed: {e!r}"
 
     async def flush(self) -> None:
         """Start a fresh stream with the same format (the only way to discard what is queued in the pipe and in PipeWire)."""

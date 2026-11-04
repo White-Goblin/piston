@@ -90,6 +90,15 @@ async def send_binary(writer, data: bytes) -> None:
     await writer.drain()
 
 
+def send_close_now(writer, code: int = 1000, reason: str = "") -> None:
+    """A close frame without waiting for it to drain (a transport sends at once when its buffer is empty); never raises. For code
+    that has to finish without the event loop running."""
+    try:
+        writer.write(frame(OP_CLOSE, struct.pack("!H", code) + reason.encode()[:100]))
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def send_ping(writer) -> None:
     writer.write(frame(OP_PING))
     await writer.drain()

@@ -1,5 +1,6 @@
 import { PanelSection } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
+import { MediaCard } from "../media/MediaCard";
 import { AppsSection } from "./AppsSection";
 import { StatusSection } from "./StatusSection";
 import { WakeOnLanSection } from "./WakeOnLanSection";
@@ -18,12 +19,13 @@ export function Panel() {
     if (right) setMenuMaxWidth(Math.ceil(right) + 16);
   }, [state?.settings]);
 
-  if (!state) return null;
+  if (!state) return <MediaCard />;
 
   return (
     <>
       {menuMaxWidth > 0 && <style>{`.BasicUIContextMenu { max-width: ${menuMaxWidth}px; }`}</style>}
       <div ref={panelRef} />
+      <MediaCard />
       <StatusSection status={state.status} pairing={state.pairing} reset={state.reset} />
       <PanelSection>
         <AppsSection settings={state.settings} setApps={state.setApps} />

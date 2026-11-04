@@ -92,10 +92,20 @@ Both only exist for devices whose plugin has the player.
 Details:
 
 - The player is named "<device name> audio". Music Assistant needs to reach TCP port 8928 on the device (Piston uses the next free port if 8928 is taken; the status sensor shows the port) and must be on the same network segment, because it finds the device with mDNS (`_sendspin._tcp`).
-- It plays raw 16-bit stereo audio (44.1 and 48 kHz). Music Assistant sends it as it is.
+- It decodes FLAC (16 and 24-bit, 44.1 and 48 kHz), Opus (48 kHz) and raw PCM (16-bit stereo, 44.1 and 48 kHz). The plugin offers them in that order, so Music Assistant normally sends FLAC. The decoders are the device's own `libFLAC` and `libopus`, loaded at start and checked with a short self-test; one that is missing or fails is not offered (PCM always is), and the plugin log says which codecs are available. 24-bit audio is played at 24-bit precision.
 - It follows the device: before a sleep or shutdown it says goodbye to Music Assistant and stops advertising, and after a wake it comes back by itself once the network is up. It is part of the plugin's background service, but it has not been tested in desktop mode yet.
+- It is built to stay out of the way of the rest of the system. The audio output is opened and controlled by a separate task with short time limits, so an audio server that stops answering cannot freeze the connection to Music Assistant or the rest of the plugin; if the output cannot be opened the player retries with a growing delay (up to 30 seconds), tells Music Assistant it is unavailable meanwhile, and carries on when the output works again. Its `pactl` helper calls are killed if they hang. The Sendspin status sensor shows `error` with the reason while the output is down.
 - One server at a time is connected; a newer connection normally takes over from the current one (Sendspin's rule: unless it has less activity, then it is turned away).
-- Not supported yet: pairing, FLAC and Opus (PCM is used), ducking the game's sound during an announcement, and showing metadata or artwork on the device itself.
+- Not supported yet: pairing, and ducking the game's sound during an announcement (Music Assistant tells the device nothing that marks an announcement, so there is nothing to react to).
+
+### Media card
+
+From version 0.7.0 the device shows what the Sendspin player is playing and has simple controls, for whoever is sitting at the device with a controller. Home Assistant is not involved.
+
+- **Where:** a **Piston** tab in the Quick Access menu, next to the Decky tab. If that tab cannot be added (it relies on Decky Loader internals), the card appears at the top of the Piston plugin panel instead; it is never in both places.
+- **What it shows:** the cover (square), title, artist, a progress bar with the elapsed and total time (only the elapsed time when the length is unknown), previous / play-pause / next, and a **Music volume** slider. The tab says "Nothing playing" and the panel shows nothing while there is no track.
+- **Buttons** work through Music Assistant, so one that Music Assistant does not offer for the current queue is disabled (for example next on a one-track queue does nothing). The slider sets this device's own Sendspin player volume, the same value Music Assistant shows; it does not change the system or HDMI CEC volume.
+- **Limits:** no seeking, shuffle, repeat, mute button or queue. An announcement does not change the card: Music Assistant sends no information about it, so the card keeps showing the music. The card needs the Steam interface, so it is not available in desktop mode (the music keeps playing). The cover is a 512 pixel JPEG from Music Assistant.
 
 ## Plugin updates
 

@@ -77,7 +77,7 @@ class CardTests(SessionTestCase):
         h = await self.start()
         s = h.sessions[0]
         await s.set_player_volume(30)
-        self.assertEqual(h.sink.volume, 30)
+        await h.wait_for(lambda: h.sink.volume == 30)
         self.assertIn({"volume": 30}, h.settings)
         state = None
         while state is None or state["player"]["volume"] != 30:

@@ -132,6 +132,20 @@ class MdnsAdvertiser:
         """Re-announce with changed TXT values (e.g. paired)."""
         self.sock.sendto(self.update_txt(**txt), (MCAST, PORT))
 
+    def abort(self) -> None:
+        """Synchronous stop for an unload that cannot wait: a goodbye packet if the network allows, then the socket closes."""
+        task = getattr(self, "_task", None)
+        if task:
+            task.cancel()
+        if self.sock:
+            try:
+                self.sock.sendto(self._packet(0), (MCAST, PORT))
+            except OSError:
+                pass
+            finally:
+                self.sock.close()
+                self.sock = None
+
     async def stop(self):
         if self._task:
             self._task.cancel()
