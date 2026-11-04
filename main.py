@@ -22,9 +22,12 @@ from decky_ha.pip import PipMixin
 from decky_ha.pip_signal import PipSignalMixin
 from decky_ha.resume import ResumeMixin
 from decky_ha.sensors import SensorsMixin
+from decky_ha.proto import LANE_VERSION, messages as proto_messages
 from decky_ha.server import DEFAULT_PORT, ProtocolServer
 from decky_ha.settings import SettingsMixin
 from decky_ha.state import StateMixin
+from decky_ha.update import UpdateMixin
+from decky_ha.version import plugin_version
 from decky_ha.wol import WolMixin
 
 
@@ -42,6 +45,7 @@ class Plugin(
     PipMixin,
     PipSignalMixin,
     WolMixin,
+    UpdateMixin,
     HttpServerMixin,
 ):
     def _commands(self) -> dict:
@@ -72,10 +76,19 @@ class Plugin(
             self._pip_close_all(notify=False)  # nobody left to relay for
             self.loop.create_task(decky.emit("pip", {"action": "hide"}))
         self.loop.create_task(decky.emit("link", {"connected": connected}))
+        if connected:
+            self._resend_update_status()
 
     def _advert_info(self) -> dict:
         s = self._load_settings()
         return {"device_id": s["device_id"], "name": s["device_name"], "paired": bool(s["secret"])}
+
+    def _hello_extra(self) -> dict:
+        extra = {"name": self._load_settings()["device_name"]}
+        version = plugin_version()
+        if version is not None:
+            extra.update(proto_messages.device_hello_extra(version, LANE_VERSION))
+        return extra
 
     # --- panel callables --------------------------------------------------
 
@@ -112,6 +125,7 @@ class Plugin(
         self._init_media()
         self._init_pairing()
         self._init_pip_signal()
+        self._init_update()
         decky.logger.info("Decky Home Assistant starting")
 
         self.server = ProtocolServer(
@@ -122,7 +136,9 @@ class Plugin(
             snapshot=self._snapshot,
             port=DEFAULT_PORT,
             on_connection=self._on_link,
-            hello_extra=lambda: {"name": self._load_settings()["device_name"]},
+            hello_extra=self._hello_extra,
+            on_update=self._on_update_frame,
+            update_status=self._update_status,
         )
         try:
             await self.server.start()
@@ -138,6 +154,7 @@ class Plugin(
         self.sensor_task = asyncio.create_task(self._sensor_loop())
         self.audio_task = asyncio.create_task(self._audio_mode_loop())
         self.device_task = asyncio.create_task(self._device_loop())
+        self._update_startup()
         self.session_task = asyncio.create_task(self._session_loop())
         self.resume_task = asyncio.create_task(self._resume_loop())
         self.playback_task = asyncio.create_task(self._playback_loop())
@@ -148,15 +165,25 @@ class Plugin(
 
     async def _unload(self):
         decky.logger.info("Decky Home Assistant unloading")
-        for task in (self.sensor_task, self.audio_task, self.device_task, self.session_task, self.resume_task, self.playback_task):
-            task.cancel()
-        await self._stop_lifecycle()
-        if self.advertiser is not None:
-            await self.advertiser.stop()
-        await self.server.stop()
-        self._close_keyboard()
-        if self.http_server is not None:
-            self.http_server.close()
+        # Decky may unload a plugin that is still starting (an install right after a start): only stop what exists
+        for name in ("sensor_task", "audio_task", "device_task", "session_task", "resume_task", "playback_task",
+                     "update_task", "update_confirm_task", "update_approval_task"):
+            task = getattr(self, name, None)
+            if task is not None:
+                task.cancel()
+        if getattr(self, "lifecycle", None) is not None:
+            await self._stop_lifecycle()
+        advertiser = getattr(self, "advertiser", None)
+        if advertiser is not None:
+            await advertiser.stop()
+        server = getattr(self, "server", None)
+        if server is not None:
+            await server.stop()
+        if getattr(self, "keyboard", None) is not None:
+            self._close_keyboard()
+        http_server = getattr(self, "http_server", None)
+        if http_server is not None:
+            http_server.close()
 
     async def _uninstall(self):
         decky.logger.info("Decky Home Assistant uninstalled")

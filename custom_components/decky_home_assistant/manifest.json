@@ -11,7 +11,7 @@
   "issue_tracker": "https://github.com/White-Goblin/steamos-media-control/issues",
   "quality_scale": "silver",
   "requirements": [],
-  "version": "0.3.0",
+  "version": "0.4.2",
   "zeroconf": [
     "_deckyha._tcp.local."
   ]

@@ -8,13 +8,15 @@ All frames are JSON text, at most 1 MB.
 
 | Frame | Direction | Meaning |
 |---|---|---|
-| `hello` `{proto, min_proto, device_id, paired, name?}` | both | Version negotiation. Each side accepts the versions from its `min_proto` up to its `proto`, and both are 3 now; a peer on another version gets `version_skew` and the device closes with code 4000. Home Assistant shows a Repairs item that says which side to update |
+| `hello` `{proto, min_proto, device_id, paired, name?, plugin_version?, lane?}` | both | Version negotiation. Each side accepts the versions from its `min_proto` up to its `proto`, and both are 3 now; a peer on another version gets `version_skew` and the device closes with code 4000, unless the peers can talk through the [update lane](#updating-the-plugin). The device adds its `plugin_version` (`1.2.3`) and `lane` (1) from release 0.4.0 on |
 | `challenge` / `proof` | device and HA | Mutual authentication for a paired device: the device sends a nonce, HA answers with its own nonce and an HMAC-SHA256 proof of the per-device secret, the device proves back. Proofs are labelled by role |
 | `pair` `{step: begin / challenge / proof / done / error}` | both | Pairing for an unpaired device (see below) |
 | `cmd` `{id, name, data}` | HA to device | A command; answered by a `result` with the same `id` |
 | `result` `{id, ok, data?, error?}` | device to HA | `error.code` is one of `bad_request`, `unauthorized`, `busy`, `offline`, `not_running`, `unsupported`, `internal`, `version_skew` |
 | `state` `{name, data, boot_id, seq}` | device to HA | The full latest value of a state group, with the sequencing fields below |
 | `event` `{name, data}` | device to HA | A one-off event |
+| `update` `{version, url, sha256}` | HA to device | Install this plugin release (see [Updating the plugin](#updating-the-plugin)) |
+| `update_status` `{state, version, reason?}` | device to HA | Progress or failure of an update |
 
 Close codes: 4000 version skew, 4001 replaced by a newer connection, 4002 unauthorized, 4003 bad request. The device keeps one authenticated connection; a new one replaces the old.
 
@@ -67,3 +69,14 @@ When a connection ends the integration keeps trying to reconnect: every 5 second
 ## Picture-in-picture signalling
 
 The player page runs in a Steam browser view and holds no Home Assistant credential. It long-polls the plugin on loopback (`/pip/events`, `/pip/send`, protected by a per-run nonce); the plugin forwards its messages to the integration as `pip_signal` events and queues the integration's `pip_signal` commands for it. The integration calls the camera entity's WebRTC handlers (offer, candidates) or builds an HLS stream URL. The video itself flows directly between Home Assistant and the device.
+
+## Updating the plugin
+
+From release 0.4.0 the integration keeps the plugin on the device at the version of the integration itself (the version in its manifest). Every release so far changed the protocol, and a device with a different protocol version used to be closed at `hello` before anything could be said to it, so the handshake is now **frozen**: the device `hello` (with `plugin_version` and `lane`), the `challenge`/`proof` exchange and the close codes keep their shape in every later release, and the device authenticates a paired peer *before* it compares protocol versions.
+
+- **The update lane.** A paired, authenticated peer whose protocol version differs may exchange only `update` and `update_status` frames; anything else gets `version_skew` and close code 4000. An unpaired device never offers the lane. A device without `lane` in its `hello` (every release before 0.4.0) behaves as before: close at version skew and a Repairs item. Releases before 0.4.0 are updated by hand once.
+- **`update {version, url, sha256}`.** `version` is `N.N.N`; `url` must be the release asset `https://github.com/White-Goblin/steamos-media-control/releases/download/v<version>/decky-home-assistant-<version>.zip`; `sha256` comes from the release's `SHA256SUMS` file, which the integration fetches. The device refuses a request that is not well formed, is for the version it already runs, or arrives while another update is running.
+- **What the device does.** It downloads the zip (HTTPS to GitHub only, at most 50 MiB, 60 s), checks the SHA-256 and the archive (only the plugin folder, no path escapes or links, the right version inside), keeps a copy of the version that runs now, and gives the verified zip to the Steam interface, which asks Decky Loader to install it. **Decky Loader shows its own install dialog on the device and the user approves it**; nothing approves it for them. The old plugin keeps running until then.
+- **`update_status {state, version, reason?}`.** `state` is `downloading`, `waiting_for_ui` (the Steam interface is not available, for example in desktop mode), `waiting_for_confirmation` (Decky's dialog is waiting for the user), `installing`, `failed` or `idle`. `reason` of a failure: `bad_request`, `busy`, `download`, `hash`, `archive`, `installer`, `not_confirmed` (the dialog was cancelled or ignored for 30 minutes) or `version` (set by the integration when the plugin came back on another version). The new plugin's `hello` carrying the target `plugin_version` is the proof that the update worked.
+- **If the new version does not come up.** The device keeps the previous zip; if the new version is installed and its backend does not confirm within 5 minutes, the Steam interface asks Decky Loader to install the previous version again from that copy (Decky asks for approval again).
+- **Failures do not retry by themselves.** The integration remembers the failure for that release and tries again only when the user presses Install or a newer release is the target.

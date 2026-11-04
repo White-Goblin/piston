@@ -121,24 +121,24 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_missing_file_loads_empty_without_a_warning(self):
         with self.assertNoLogs(store_module._LOGGER, "WARNING"):
-            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None})
+            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None, "update": {}})
 
     async def test_a_corrupt_file_loads_empty_and_logs_once(self):
         Store.files[KEY] = ValueError("not json")
         with self.assertLogs(store_module._LOGGER, "WARNING") as logs:
-            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None})
+            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None, "update": {}})
         self.assertEqual(len(logs.output), 1)
 
     async def test_a_newer_version_loads_empty_and_logs_once(self):
         Store.files[KEY] = {"version": 99, "data": {"groups": {"device": {"name": "x"}}}}
         with self.assertLogs(store_module._LOGGER, "WARNING") as logs:
-            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None})
+            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None, "update": {}})
         self.assertEqual(len(logs.output), 1)
 
     async def test_an_older_version_migrates_to_nothing_without_a_warning(self):
         Store.files[KEY] = {"version": 0, "data": {"anything": 1}}
         with self.assertNoLogs(store_module._LOGGER, "WARNING"):
-            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None})
+            self.assertEqual(await self.store.async_load(), {"groups": {}, "last_connected": None, "update": {}})
 
     async def test_an_unexpected_shape_loads_empty_and_logs_once(self):
         for data in ({"groups": ["a"]}, {"groups": {"device": "x"}}, ["not", "a", "dict"]):
@@ -162,3 +162,39 @@ class StoreTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateFactsTests(unittest.IsolatedAsyncioTestCase):
+    """The plugin-update facts (version, auto setting, failure latch) are stored with the rest."""
+
+    def setUp(self):
+        Store.reset()
+
+    def make(self, update, fx=None):
+        fx = fx or Fixture()
+        store = DeckyStore(HomeAssistant(), "e1", fx.current, now=lambda: fx.now, current_update=lambda: update)
+        return store, update
+
+    async def test_they_are_written_and_read_back(self):
+        update = {"plugin_version": "0.4.0", "auto_update": False, "latch": {"version": "0.4.1", "reason": "hash"}}
+        store, _ = self.make(update)
+        await store.async_save_now()
+        again = DeckyStore(HomeAssistant(), "e1", Fixture().current)
+        loaded = await again.async_load()
+        self.assertEqual(loaded["update"], update)
+
+    async def test_wrong_shapes_are_dropped(self):
+        store, _ = self.make({"plugin_version": 3, "auto_update": "yes", "latch": {"version": "1.0.0"}})
+        await store.async_save_now()
+        self.assertEqual((await DeckyStore(HomeAssistant(), "e1", Fixture().current).async_load())["update"], {})
+
+    async def test_a_change_schedules_a_save_and_an_identical_state_does_not(self):
+        update = {"auto_update": True}
+        store, _ = self.make(update)
+        await store.async_save_now()
+        Store.delays.clear()
+        store.note_changed()
+        self.assertEqual(Store.delays, [])
+        update["auto_update"] = False
+        store.note_changed()
+        self.assertEqual(len(Store.delays), 1)

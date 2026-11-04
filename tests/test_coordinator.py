@@ -367,3 +367,79 @@ class VersionSkewIssueTests(SetupTests):
         issue_id, kw = IssueRegistry.created[0]
         self.assertEqual((issue_id, kw["translation_key"]), ("version_skew_old_dev123abc456", "version_skew_old"))
         self.assertEqual(self.entry.runtime_data.problem, "version_skew_old")
+
+
+class UpdateIssueTests(SetupTests):
+    """Repairs for the plugin update (see __init__.sync_update_issues)."""
+
+    async def start(self):
+        await integration.async_setup_entry(self.hass, self.entry)
+        self.addAsyncCleanup(integration.async_unload_entry, self.hass, self.entry)
+        await self.wait_for(lambda: self.entry.runtime_data.connected)
+        coord = self.entry.runtime_data
+        coord.target_version, coord.plugin_version = "0.4.1", "0.4.0"
+        IssueRegistry.created.clear()
+        IssueRegistry.deleted.clear()
+        return coord
+
+    def created(self):
+        return {i: kw for i, kw in IssueRegistry.created}
+
+    async def test_a_failed_update_raises_an_issue_and_arriving_at_the_target_clears_it(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.1", "reason": "hash"})
+        issue = self.created()["plugin_update_failed_dev123abc456"]
+        self.assertEqual(issue["translation_key"], "plugin_update_failed")
+        self.assertEqual(issue["translation_placeholders"]["version"], "0.4.1")
+        self.assertIn("checksum", issue["translation_placeholders"]["reason"])
+        coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.1", "reason": "hash"})
+        self.assertEqual(len(IssueRegistry.created), 1)                      # not raised again for the same failure
+        coord.on_hello({"type": "hello", "plugin_version": "0.4.1"}, None)
+        self.assertIn("plugin_update_failed_dev123abc456", IssueRegistry.deleted)
+
+    async def test_the_approval_notice_exists_while_the_dialog_waits_and_goes_away_afterwards(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_ui", "version": "0.4.1"})
+        issue = self.created()["plugin_update_confirm_dev123abc456"]
+        self.assertEqual((issue["translation_key"], issue["translation_placeholders"]), ("plugin_update_confirm", {"name": "Box"}))
+        self.assertFalse(issue["is_fixable"])
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertEqual(len(IssueRegistry.created), 1)                       # still the same notice
+        coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.1", "reason": "not_confirmed"})
+        self.assertIn("plugin_update_confirm_dev123abc456", IssueRegistry.deleted)
+        failed = self.created()["plugin_update_failed_dev123abc456"]
+        self.assertIn("not approved", failed["translation_placeholders"]["reason"])
+
+    async def test_the_approval_notice_goes_away_when_the_new_version_arrives(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "waiting_for_confirmation", "version": "0.4.1"})
+        self.assertIn("plugin_update_confirm_dev123abc456", self.created())
+        coord.on_hello({"type": "hello", "plugin_version": "0.4.1"}, None)
+        self.assertIn("plugin_update_confirm_dev123abc456", IssueRegistry.deleted)
+
+    async def test_a_failure_for_an_older_target_is_not_shown(self):
+        coord = await self.start()
+        coord.on_update_status({"type": "update_status", "state": "failed", "version": "0.4.0", "reason": "hash"})
+        self.assertEqual(self.created(), {})
+
+    async def test_a_lane_connection_with_auto_off_raises_the_manual_issue_and_with_auto_on_none(self):
+        coord = await self.start()
+        coord.skewed = "old"
+        coord.set_auto_update(True)
+        self.assertEqual(self.created(), {})
+        coord.set_auto_update(False)
+        self.assertIn("version_skew_updatable_dev123abc456", self.created())
+        coord.on_update_status({"type": "update_status", "state": "downloading", "version": "0.4.1"})
+        self.assertIn("version_skew_updatable_dev123abc456", IssueRegistry.deleted)       # an install was started by hand
+
+    async def test_an_updatable_skew_does_not_raise_the_old_issue_but_a_plain_one_does(self):
+        coord = await self.start()
+        coord.client._on_problem(integration.VersionSkew("old", updatable=True))
+        self.assertNotIn("version_skew_old_dev123abc456", self.created())
+        coord.client._on_problem(integration.VersionSkew("old"))
+        self.assertIn("version_skew_old_dev123abc456", self.created())
+
+    async def test_removing_the_entry_removes_the_update_issues(self):
+        await integration.async_remove_entry(self.hass, self.entry)
+        for kind in ("plugin_update_failed", "version_skew_updatable", "plugin_update_confirm"):
+            self.assertIn(f"{kind}_dev123abc456", IssueRegistry.deleted)

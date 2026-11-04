@@ -4,9 +4,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .client import CommandError, DeckyClient, DeviceOffline, VersionSkew
+from . import update_logic
 from .const import CONF_MAC, CONF_NAME, DEFAULT_OPTIONS, OPT_SENSOR_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -25,7 +26,8 @@ class DeckyCoordinator:
     or None if there never was one since Home Assistant started."""
 
     def __init__(self, hass, entry, *, off_timeout: float = OFF_TIMEOUT,
-                 persist_mac: Callable[[str], None] | None = None, now: Callable[[], datetime] = _utcnow):
+                 persist_mac: Callable[[str], None] | None = None, now: Callable[[], datetime] = _utcnow,
+                 target_version: str | None = None, fetch_text: Callable[[str], Awaitable[str]] | None = None):
         self.hass, self.entry = hass, entry
         self._now = now
         self._shut_down = False
@@ -47,6 +49,18 @@ class DeckyCoordinator:
         self._listeners: list[Callable[[], None]] = []
         self._event_listeners: dict[str, list[Callable[[dict], None]]] = {}
         self._persist_mac = persist_mac
+        # Plugin self-update (see update_logic.py): the integration's version is the version the plugin should run
+        self.target_version = target_version
+        self._fetch_text = fetch_text
+        self.plugin_version: str | None = None      # from the device hello; remembered across restarts
+        self.auto_update = True
+        self.update_latch: dict | None = None       # {"version", "reason"} of the last failed update
+        self.update_status: dict | None = None      # the last update_status frame {state, version, reason?}
+        self.skewed: str | None = None              # "old" / "new" while only the update lane is open
+        self.update_outcome: str | None = None      # last decide() outcome or "cannot_determine"
+        self._expect_install = False                # an install was under way: the next hello must show the target
+        self._sums_cache: dict = {}
+        self._decide_task: asyncio.Task | None = None
         self._start_off_timer()  # never seen yet: becomes "off" unless it connects first
 
     @property
@@ -140,6 +154,124 @@ class DeckyCoordinator:
         elif self.power != "off":
             self._start_off_timer()  # a silent drop: keep the last state until the timeout
         self._notify()
+
+    def on_hello(self, hello: dict, skew: str | None) -> None:
+        """Called by the client after every authenticated connection, before it is announced as connected."""
+        version = hello.get("plugin_version")
+        self.plugin_version = version if isinstance(version, str) else None
+        self.skewed = skew
+        if self.target_version is not None:
+            if self.plugin_version == self.target_version:
+                self.update_latch = None
+                self.update_status = None
+            elif self._expect_install:
+                self.update_latch = {"version": self.target_version, "reason": "version"}
+        self._expect_install = False
+        self._notify()
+        self.schedule_update_check()
+
+    def on_lane_closed(self) -> None:
+        self.skewed = None
+        self._notify()
+
+    @property
+    def link_up(self) -> bool:
+        """An authenticated connection exists: the normal one, or the update lane under a protocol mismatch."""
+        return self.connected or (self.skewed is not None and self.client is not None and self.client.lane_connected)
+
+    def on_update_status(self, frame: dict) -> None:
+        state = frame["state"]
+        self.update_status = {"state": state, "version": frame.get("version", ""), "reason": frame.get("reason")}
+        if state in ("downloading", "waiting_for_ui", "waiting_for_confirmation", "installing") and self.update_latch \
+                and self.update_latch.get("reason") == "version":
+            self.update_latch = None  # the device is working on it again (for example a dropped connection while the dialog waited)
+        if state in ("waiting_for_confirmation", "installing"):
+            self._expect_install = True
+        elif state == "failed":
+            self._expect_install = False
+            self.update_latch = {"version": frame.get("version") or self.target_version or "", "reason": frame.get("reason") or "installer"}
+        self._notify()
+
+    @property
+    def update_in_progress(self) -> bool:
+        return self.update_status is not None and self.update_status["state"] in (
+            "downloading", "waiting_for_ui", "waiting_for_confirmation", "installing")
+
+    @property
+    def update_needs_approval(self) -> bool:
+        """The update is ready and waiting for the user: for the dialog of Decky Loader on the device (or for game mode)."""
+        return self.update_status is not None and self.update_status["state"] in ("waiting_for_ui", "waiting_for_confirmation")
+
+    @property
+    def update_state(self) -> str:
+        """For the update entity: waiting_for_ui, waiting_for_confirmation, in_progress, failed, cannot_determine, up_to_date, available, predates_lane, no_lane or unknown."""
+        if self.update_needs_approval:
+            return self.update_status["state"]
+        if self.update_in_progress:
+            return "in_progress"
+        if self.update_latch and self.update_latch["version"] == self.target_version:
+            return "failed"
+        if self.update_outcome in (None, update_logic.SEND):
+            return "unknown" if self.update_outcome is None else "available"
+        return self.update_outcome
+
+    def schedule_update_check(self, pressed: bool = False) -> None:
+        """Decide in a task: the client announces the hello before its connection object is usable for sending."""
+        if self._shut_down or self.client is None:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._decide_task = loop.create_task(self.async_check_update(pressed))
+
+    async def async_check_update(self, pressed: bool = False) -> None:
+        """Compare the device's plugin with the integration's version and send an update when the rules say so."""
+        if self.target_version is None or self.update_in_progress:
+            return
+        outcome = update_logic.decide(self.plugin_version, self.target_version, auto=self.auto_update, pressed=pressed,
+                                      latch=self.update_latch)
+        self.update_outcome = outcome
+        if outcome == update_logic.SEND:
+            checksum = await update_logic.zip_checksum(self._fetch_text, self.target_version, self._sums_cache) \
+                if self._fetch_text is not None else None
+            if checksum is None:
+                self.update_outcome = update_logic.CANNOT_DETERMINE
+            else:
+                try:
+                    await self.client.send_update(self.target_version, update_logic.asset_url(self.target_version), checksum)
+                    self.update_latch = None if pressed else self.update_latch
+                except DeviceOffline:
+                    if pressed:
+                        raise  # a press must say it did not work; the automatic check just tries again at the next connection
+        self._notify()
+
+    async def async_install_update(self) -> None:
+        """The Install button: send the update now, whatever the auto setting and an earlier failure say."""
+        await self.async_check_update(pressed=True)
+
+    def set_auto_update(self, value: bool) -> None:
+        self.auto_update = value
+        self._notify()
+        if value:
+            self.schedule_update_check()
+
+    def update_facts(self) -> dict:
+        """What the store keeps about updates."""
+        facts: dict = {"auto_update": self.auto_update}
+        if self.plugin_version is not None:
+            facts["plugin_version"] = self.plugin_version
+        if self.update_latch is not None:
+            facts["latch"] = dict(self.update_latch)
+        return facts
+
+    def restore_update(self, facts: dict) -> None:
+        if isinstance(facts.get("auto_update"), bool):
+            self.auto_update = facts["auto_update"]
+        if self.plugin_version is None and isinstance(facts.get("plugin_version"), str):
+            self.plugin_version = facts["plugin_version"]
+        if isinstance(facts.get("latch"), dict):
+            self.update_latch = dict(facts["latch"])
 
     def on_problem(self, error: Exception) -> None:
         self.problem = "version_skew_" + error.peer if isinstance(error, VersionSkew) else "auth_failed"

@@ -12,6 +12,7 @@ Tested with Home Assistant 2026.10 and a Steam Machine running SteamOS.
 |---|---|
 | Media player (named after the device) | Turn on (Wake on LAN) and off (sleep, or shut down if you choose), pick an app or game as the source (the running app is closed first), play, pause, next and previous for the running app, volume and mute |
 | Desktop mode (switch) | On switches the device to the desktop session, off returns to game mode |
+| Plugin update (update) and Install plugin updates automatically (switch) | The plugin version on the device against the version of this integration, with an Install button; the switch (on by default) lets Home Assistant update the plugin on its own |
 | Restart device, Restart Steam (buttons) | Reboot the device, or restart the Steam client |
 | Connectivity (binary sensor) | Whether the device is online and awake |
 | Steam screen (sensor) | `game`, `steam_over_game`, `steam` or `desktop` |
@@ -29,7 +30,7 @@ Actions (Developer tools, automations and scripts):
 ## Install
 
 1. **Integration.** In HACS open the menu, choose Custom repositories, add `https://github.com/White-Goblin/steamos-media-control` as category Integration, then download Decky Home Assistant and restart Home Assistant.
-2. **Plugin on the device.** Download `decky-home-assistant-<version>.zip` from the [releases](https://github.com/White-Goblin/steamos-media-control/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.)
+2. **Plugin on the device.** Download `decky-home-assistant-<version>.zip` from the [releases](https://github.com/White-Goblin/steamos-media-control/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
 3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Decky Home Assistant; the panel shows a 6-digit code. Enter it in Home Assistant. Done: the entities appear.
 4. **Choose your apps.** In the plugin panel, under Apps in Home Assistant, add the Steam games and non-Steam apps you want as media player sources.
 5. **Wake on LAN** (to turn the device on from Home Assistant). Set this up on the device yourself, see [Wake on LAN](#wake-on-lan) below.
@@ -61,6 +62,17 @@ Settings > Devices & services > Decky Home Assistant > Configure:
 | PiP size | Medium | Small, medium, large or extra large (a share of the screen width). |
 | PiP hide after | 30 seconds | 10, 20, 30, 60 or 300 seconds, or until hidden. The `show_pip` action can override it. |
 | Mute PiP | On | Start camera pictures without sound. |
+
+## Plugin updates
+
+From version 0.4.0 the plugin on the device follows the integration: when you update the integration in HACS and restart Home Assistant, the device is brought to the same version.
+
+- The **Plugin update** entity (on the device page) shows the plugin version on the device and the version of the integration, with an Install button. **Install plugin updates automatically** (a switch, on by default) lets Home Assistant start the update as soon as the device connects; turn it off to start updates yourself with Install.
+- **You approve the install on the device.** Decky Loader always asks first: a dialog ("Install Decky Home Assistant") appears in the Steam interface and you tap OK. While it waits, the update entity says so (in its release summary) and a Repairs item, "Approve the plugin update on ...", reminds you. The device also shows a toast ("Plugin update ready"); tapping it shows the dialog again, which helps if the dialog disappeared (for example after Steam restarted). If the device is in desktop mode, switch it to game mode: the dialog appears there. If you cancel or ignore it, after 30 minutes the update is marked as not approved (a Repairs item says so); press Install to ask again.
+- The device downloads the release from GitHub itself and checks it against the checksum in the release's `SHA256SUMS` file before it gives it to Decky Loader. A compromised GitHub release would not be noticed by this check. If something goes wrong the old plugin keeps running; a failed update is shown in Repairs and is not retried until you press Install or a newer version is out.
+- If a new plugin installs but does not start, the device asks Decky Loader to put the previous version back (you approve that dialog too). If the plugin is ever too broken to do even that, install the zip from the releases page by hand as in step 2.
+- Plugins older than 0.4.0 cannot be updated this way and still show the version-mismatch Repairs item: install the zip once by hand.
+- Downgrades follow the integration too: if you roll the integration back in HACS to 0.4.0 or newer, the plugin is brought back to that version. Versions before 0.4.0 are never targeted.
 
 ## Wake on LAN
 
@@ -97,7 +109,8 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 - **"Too many wrong codes".** The device waits a minute and then shows a new code.
 - **Entities are unavailable.** The device is asleep, off, or Home Assistant cannot reach port 47830. Check the Connectivity entity and the plugin panel.
 - **I removed the device or reinstalled Home Assistant.** In the plugin panel press Reset pairing, then pair again.
-- **Home Assistant says the integration or the plugin is too old.** Update the one that is older (a Repairs item tells you which).
+- **Home Assistant says the integration or the plugin is too old.** Update the one that is older (a Repairs item tells you which). A plugin of version 0.4.0 or newer is updated by Home Assistant itself; an older one needs the zip installed by hand once.
+- **The plugin update never finishes.** Look at the device: Decky Loader's install dialog is waiting for you, or the device is in desktop mode (switch to game mode). The update entity and the Repairs item say which.
 - **Turn on does nothing.** Wake on LAN has to be set up on the device (see [Wake on LAN](#wake-on-lan)), and some devices cannot wake from a full shutdown.
 
 ## Uninstall

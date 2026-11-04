@@ -4,6 +4,7 @@ import { PipOverlay } from "./pip/PipOverlay";
 import { registerPipControl } from "./pip/control";
 import { registerDeviceControl } from "./control/device";
 import { registerToasts } from "./notify/toasts";
+import { registerUpdateInstaller } from "./update/install";
 import { Panel } from "./panel/Panel";
 import { FaHome } from "react-icons/fa";
 
@@ -13,6 +14,7 @@ export default definePlugin(() => {
   routerHook.addGlobalComponent("DeckyHomeAssistantPip", PipOverlay);
   const unregisterPip = registerPipControl();
   const unregisterDevice = registerDeviceControl();
+  const unregisterUpdate = registerUpdateInstaller();
 
   return {
     name: "Decky Home Assistant",
@@ -23,6 +25,7 @@ export default definePlugin(() => {
       unregisterToasts();
       unregisterPip();
       unregisterDevice();
+      unregisterUpdate();
       routerHook.removeGlobalComponent("DeckyHomeAssistantPip");
     },
   };

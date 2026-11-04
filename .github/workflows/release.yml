@@ -29,4 +29,4 @@ jobs:
       - name: Create the release with the plugin zip
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" out/*.zip --title "$GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" out/*.zip out/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes

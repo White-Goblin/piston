@@ -1,7 +1,7 @@
 """Constants for the Decky Home Assistant integration."""
 
 DOMAIN = "decky_home_assistant"
-PLATFORMS: list[str] = ["binary_sensor", "button", "event", "media_player", "notify", "select", "sensor", "switch"]
+PLATFORMS: list[str] = ["binary_sensor", "button", "event", "media_player", "notify", "select", "sensor", "switch", "update"]
 
 DEFAULT_PORT = 47830
 # Websocket ping interval. A ping unanswered after half of it closes the socket, so a connection left half-open by a
@@ -9,6 +9,10 @@ DEFAULT_PORT = 47830
 # so these do not interact: its own pings are what keep the device side alive.
 HEARTBEAT_SECONDS = 15
 SERVICE_TYPE = "_deckyha._tcp.local."
+
+# Plugin self-update (see docs/protocol.md): the integration's version is the version the plugin should run.
+RELEASE_REPO = "White-Goblin/steamos-media-control"
+FIRST_LANE_VERSION = "0.4.0"  # the first plugin release that can be updated by the integration
 
 CONF_DEVICE_ID = "device_id"
 CONF_SECRET = "secret"  # hex

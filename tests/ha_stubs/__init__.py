@@ -386,6 +386,18 @@ class ButtonEntity(Entity):
     pass
 
 
+class UpdateEntity(Entity):
+    pass
+
+
+class UpdateEntityFeature:
+    INSTALL = 1
+    SPECIFIC_VERSION = 2
+    PROGRESS = 4
+    BACKUP = 8
+    RELEASE_NOTES = 16
+
+
 class SensorEntity(Entity):
     pass
 
@@ -467,6 +479,7 @@ def install() -> None:
             MediaPlayerEntityFeature=MediaPlayerEntityFeature, MediaPlayerState=MediaPlayerState, MediaType=MediaType,
             MediaPlayerDeviceClass=types.SimpleNamespace(TV="tv"))
     _module("homeassistant.components.switch", SwitchEntity=SwitchEntity)
+    _module("homeassistant.components.update", UpdateEntity=UpdateEntity, UpdateEntityFeature=UpdateEntityFeature)
     _module("homeassistant.components.button", ButtonEntity=ButtonEntity,
             ButtonDeviceClass=types.SimpleNamespace(RESTART="restart"))
     _module("homeassistant.components.sensor", SensorEntity=SensorEntity,

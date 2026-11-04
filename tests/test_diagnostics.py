@@ -115,3 +115,13 @@ class DiagnosticsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
+    async def test_the_update_block_shows_versions_and_the_last_failure_but_no_addresses(self):
+        coord = populated()
+        coord.target_version, coord.plugin_version = "0.4.1", "0.4.0"
+        coord.update_latch = {"version": "0.4.1", "reason": "hash"}
+        report = await async_get_config_entry_diagnostics(coord.hass, coord.entry)
+        self.assertEqual(report["update"], {"plugin_version": "0.4.0", "target_version": "0.4.1", "auto_update": True,
+                                            "state": "failed", "skewed": None, "last_failure": {"version": "0.4.1", "reason": "hash"}})

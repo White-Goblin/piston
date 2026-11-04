@@ -6,6 +6,7 @@ The device reports which session is active; on switches to desktop, off returns 
 from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
+from homeassistant.const import EntityCategory
 
 from .entity import DeckyEntity
 
@@ -14,7 +15,7 @@ from .entity import DeckyEntity
 PARALLEL_UPDATES = 1
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    async_add_entities([DesktopModeSwitch(entry.runtime_data)])
+    async_add_entities([DesktopModeSwitch(entry.runtime_data), AutoUpdateSwitch(entry.runtime_data)])
 
 
 class DesktopModeSwitch(DeckyEntity, SwitchEntity):
@@ -36,3 +37,27 @@ class DesktopModeSwitch(DeckyEntity, SwitchEntity):
 
     async def async_turn_off(self, **kwargs) -> None:
         await self._command("power", {"action": "game"})
+
+
+class AutoUpdateSwitch(DeckyEntity, SwitchEntity):
+    """Whether this integration updates the plugin on the device by itself when the versions differ (on by default)."""
+
+    _attr_translation_key = "auto_update"
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator, "auto_update")
+
+    @property
+    def available(self) -> bool:
+        return True  # a setting of the integration: it can be changed while the device is away
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.auto_update
+
+    async def async_turn_on(self, **kwargs) -> None:
+        self.coordinator.set_auto_update(True)
+
+    async def async_turn_off(self, **kwargs) -> None:
+        self.coordinator.set_auto_update(False)

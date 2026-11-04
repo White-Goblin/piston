@@ -106,13 +106,91 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             r = await c.recv()
             self.assertEqual((r["id"], r["ok"], r["error"]["code"]), (i, False, code))
 
-    async def test_version_skew_closes_with_message(self):
-        c, _ = await self.connect({"type": "hello", "proto": 0, "min_proto": 0, "device_id": "ha"})
+    async def test_the_device_hello_carries_the_plugin_version_and_lane(self):
+        from decky_ha.proto import LANE_VERSION
+        self.server._hello_extra = lambda: m.device_hello_extra("1.2.3", LANE_VERSION)
+        _, hello = await self.connect()
+        self.assertEqual((hello["plugin_version"], hello["lane"]), ("1.2.3", LANE_VERSION))
+
+    async def login_skewed(self, proto=2, secret=SECRET):
+        """Authenticate with a peer whose protocol version differs; returns the client."""
+        c, _ = await self.connect({"type": "hello", "proto": proto, "min_proto": proto, "device_id": "ha"})
+        challenge = await c.recv()
+        self.assertEqual(challenge["type"], "challenge")  # authentication comes before the version check
+        nh = auth.make_challenge()
+        await c.send({"type": "proof", "nonce": nh, "proof": auth.prove(secret, challenge["nonce"], nh, auth.ROLE_HA)})
+        self.assertEqual((await c.recv())["type"], "proof")
+        return c
+
+    async def test_a_skewed_peer_that_authenticates_gets_the_update_lane(self):
+        c = await self.login_skewed(proto=0)
+        self.assertEqual(await c.recv(), m.update_status("idle", ""))
+        self.assertIsNone(self.server.conn)  # not a regular connection: no state, no events
+        self.assertEqual(self.events, [])
+        # only updates are served: a command gets version_skew and the connection closes
+        await c.send({"type": "cmd", "id": 1, "name": "ok"})
         r = await c.recv()
         self.assertEqual((r["error"]["code"], r["peer"]), (m.VERSION_SKEW, "old"))
         self.assertEqual(await c.recv(), ("close", 4000))
 
-    async def test_a_version_2_peer_gets_version_skew(self):
+    async def test_a_newer_peer_is_reported_as_new(self):
+        c = await self.login_skewed(proto=PROTOCOL_VERSION + 1)
+        await c.recv()
+        await c.send({"type": "cmd", "id": 1, "name": "ok"})
+        self.assertEqual((await c.recv())["peer"], "new")
+
+    async def test_the_lane_greeting_carries_the_current_update_status(self):
+        self.server._update_status = lambda: {"state": "installing", "version": "1.2.3"}
+        c = await self.login_skewed()
+        self.assertEqual(await c.recv(), m.update_status("installing", "1.2.3"))
+
+    async def test_an_update_in_the_lane_reaches_the_handler_and_status_flows_back(self):
+        got = []
+        self.server._on_update = got.append
+        c = await self.login_skewed()
+        await c.recv()
+        frame = m.update("1.2.3", "https://x/y.zip", "a" * 64)
+        await c.send(frame)
+        await asyncio.sleep(0.05)
+        self.assertEqual(got, [frame])
+        self.server.push_update_status("downloading", "1.2.3")
+        self.assertEqual(await c.recv(), m.update_status("downloading", "1.2.3"))
+
+    async def test_a_refused_update_answers_failed_and_keeps_the_connection(self):
+        def refuse(frame):
+            raise m.ProtocolError(m.BUSY, "already running")
+        self.server._on_update = refuse
+        c = await self.login_skewed()
+        await c.recv()
+        await c.send(m.update("1.2.3", "https://x/y.zip", "a" * 64))
+        self.assertEqual(await c.recv(), m.update_status("failed", "1.2.3", "busy"))
+        self.server._on_update = None
+        await c.send(m.update("1.2.4", "https://x/y.zip", "a" * 64))
+        self.assertEqual(await c.recv(), m.update_status("failed", "1.2.4", "bad_request"))
+
+    async def test_an_update_on_a_normal_connection_reaches_the_handler(self):
+        got = []
+        self.server._on_update = got.append
+        c = await self.login()
+        frame = m.update("1.2.3", "https://x/y.zip", "a" * 64)
+        await c.send(frame)
+        await asyncio.sleep(0.05)
+        self.assertEqual(got, [frame])
+        self.server.push_update_status("installing", "1.2.3")
+        self.assertEqual(await c.recv(), m.update_status("installing", "1.2.3"))
+
+    async def test_a_skewed_peer_with_a_bad_proof_gets_nothing(self):
+        got = []
+        self.server._on_update = got.append
+        c, _ = await self.connect({"type": "hello", "proto": 2, "min_proto": 2, "device_id": "ha"})
+        challenge = await c.recv()
+        await c.send({"type": "proof", "nonce": "n", "proof": "00" * 32})
+        self.assertEqual((await c.recv())["error"]["code"], m.UNAUTHORIZED)
+        self.assertEqual(await c.recv(), ("close", 4002))
+        self.assertEqual(got, [])
+
+    async def test_an_unpaired_device_gives_a_skewed_peer_version_skew_not_the_lane(self):
+        self.box["secret"] = b""
         c, _ = await self.connect({"type": "hello", "proto": 2, "min_proto": 2, "device_id": "ha"})
         r = await c.recv()
         self.assertEqual((r["error"]["code"], r["peer"]), (m.VERSION_SKEW, "old"))

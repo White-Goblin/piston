@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.4.2
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 updates itself to this one (you approve the install on the device).** This release keeps protocol version 3.
+
+### Added
+- A "Plugin update ready" toast on the device when Decky Loader's install dialog is requested. Tapping it asks for the dialog again (it never approves anything for you). Decky's dialog takes the focus while it is open, so the toast is mainly useful when the dialog has gone away.
+
+### Fixed
+- The install dialog was lost when the Steam interface restarted while it was open (switching between desktop and game mode, for example), while Home Assistant kept asking you to approve it. The plugin now asks for a fresh dialog when the Steam interface loads.
+- The automatic return to the previous plugin version, when a new version installs but does not start, never ran: a call to a plugin backend that has stopped does not fail, it waits for ever. Every such call now gives up after 8 seconds.
+
+## 0.4.1
+
+**Update the plugin on the device and the integration in Home Assistant together; from 0.4.0 on the plugin updates itself.** This release keeps protocol version 3. It is the first release checked with the plugin self-update on a real device: with 0.4.0 installed on both sides, updating the integration to 0.4.1 makes Home Assistant offer the plugin update, which you approve on the device.
+
+### Fixed
+- The plugin could not download its update from GitHub: Decky Loader's Python has no certificate bundle, so the download failed with a certificate error. The system's certificates are now loaded explicitly.
+- The plugin's Steam interface ignored an update offered for a version it had asked for before, and could mistake "no update pending" for a plugin that does not answer.
+
+## 0.4.0
+
+**Update the plugin on the device and the integration in Home Assistant together, by hand, this one last time.** This release keeps protocol version 3 and adds the first plugin that Home Assistant can update by itself; releases before it cannot be, so install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant. From the next release on the plugin follows the integration.
+
+### The plugin updates itself
+- A **Plugin update** entity shows the plugin version on the device against the integration's version, with an Install button, and an **Install plugin updates automatically** switch (on by default).
+- After you update the integration, Home Assistant tells the device to install the matching plugin release. The device downloads it from GitHub, checks it against the `SHA256SUMS` published with the release and hands it to Decky Loader, which asks you to approve the install on the device (Home Assistant says so on the entity and in Repairs). Nothing is installed without your approval.
+- It works across protocol changes: the handshake is now stable, so a device and an integration on different protocol versions can still reach each other to update the plugin (everything else is still refused until the versions match).
+- A failed update keeps the old plugin, shows a Repairs item and is not retried until you press Install; a dialog that is not approved within 30 minutes counts as not approved. A new plugin that installs but does not start is replaced by the previous version again.
+- The release now includes `SHA256SUMS` next to the plugin zip.
+
+### Changed
+- The plugin reports its version in its `hello` (`plugin_version`, `lane`); diagnostics show the versions and the last update failure.
+
+### Fixed
+- The plugin failed to unload when Decky Loader unloaded it while it was still starting.
+
 ## 0.3.0
 
 **Update the plugin on the device and the integration in Home Assistant together.** This release uses protocol version 3 and neither side talks to version 2: a mismatch shows a Repairs item in Home Assistant that names the side to update, and the entities are unavailable until both match. Install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant.
