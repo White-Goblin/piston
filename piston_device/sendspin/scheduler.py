@@ -1,0 +1,117 @@
+"""Turns timestamped audio chunks into what to append to the continuous sink stream so that every sample plays at its
+server timestamp: the chunks wait in a queue until they are about to play, then become `Silence` (the chunk is early),
+`Write` (on time), a trimmed `Write` or a `Drop` (late). Pure logic with injectable clocks; no audio hardware.
+
+The stream model: the sink plays whatever is appended, back to back. `cursor_us` is the local time at which the next
+appended frame would play. When nothing has been appended for a while the stream has run dry, and the earliest a new frame
+can play is now + the sink's latency."""
+from collections import deque
+from typing import Callable, NamedTuple
+
+
+class Write(NamedTuple):
+    at_us: float  # local time the first frame will play
+    pcm: bytes
+
+
+class Silence(NamedTuple):
+    frames: int
+
+
+class Drop(NamedTuple):
+    frames: int  # a chunk (or the late front of one) that was too late to play in sync
+
+
+class Flush(NamedTuple):
+    """Discard what the sink still holds (a `stream/clear` without a timestamp)."""
+
+
+class Scheduler:
+    def __init__(self, to_local: Callable[[int], int], now: Callable[[], int], rate: int = 48000, frame_bytes: int = 4,
+                 latency_us: int = 50_000, lookahead_us: int = 100_000, tolerance_us: int = 5_000, capacity_bytes: int = 4_000_000):
+        self._to_local, self._now = to_local, now
+        self.latency_us, self.lookahead_us, self.tolerance_us = latency_us, lookahead_us, tolerance_us
+        self.output_delay_us = 0
+        self.capacity_bytes = capacity_bytes
+        self.rate, self.frame_bytes = rate, frame_bytes
+        self._queue = deque()
+        self._queued_bytes = 0
+        self.cursor_us = None
+
+    def set_format(self, rate: int, frame_bytes: int) -> None:
+        """A new stream: drop everything and start aligning from scratch."""
+        self.rate, self.frame_bytes = rate, frame_bytes
+        self._queue.clear()
+        self._queued_bytes = 0
+        self.cursor_us = None
+
+    @property
+    def queued_bytes(self) -> int:
+        return self._queued_bytes
+
+    def _us(self, frames: int) -> float:
+        return frames * 1_000_000 / self.rate
+
+    def submit(self, ts_us: int, pcm: bytes) -> bool:
+        """Queue a chunk. False when it was refused (not whole frames, or the server overran the announced capacity)."""
+        if not pcm or len(pcm) % self.frame_bytes:
+            return False
+        if self._queued_bytes + len(pcm) > self.capacity_bytes:
+            return False
+        self._queue.append((ts_us, bytes(pcm)))
+        self._queued_bytes += len(pcm)
+        return True
+
+    def _target(self, ts_us: int) -> float:
+        return self._to_local(ts_us) - self.output_delay_us
+
+    def next_due_in_us(self) -> float | None:
+        """How long until the oldest queued chunk should be released (0 if due now); None when the queue is empty."""
+        if not self._queue:
+            return None
+        return max(0.0, self._target(self._queue[0][0]) - self.latency_us - self.lookahead_us - self._now())
+
+    def poll(self) -> list:
+        """Actions for every chunk that is now due, in order."""
+        actions = []
+        while self._queue:
+            ts, pcm = self._queue[0]
+            target = self._target(ts)
+            now = self._now()
+            if target - self.latency_us - self.lookahead_us > now:
+                break
+            self._queue.popleft()
+            self._queued_bytes -= len(pcm)
+            earliest = now + self.latency_us
+            cursor = earliest if self.cursor_us is None else max(self.cursor_us, earliest)
+            offset = target - cursor
+            frames = len(pcm) // self.frame_bytes
+            if offset > self.tolerance_us:  # early: wait with silence
+                gap = round(offset * self.rate / 1_000_000)
+                actions.append(Silence(gap))
+                cursor += self._us(gap)
+            elif offset < -self.tolerance_us:  # late: skip the part that should already have played
+                late = round(-offset * self.rate / 1_000_000)
+                if late >= frames:
+                    actions.append(Drop(frames))
+                    self.cursor_us = cursor
+                    continue
+                actions.append(Drop(late))
+                pcm = pcm[late * self.frame_bytes:]
+                frames -= late
+            actions.append(Write(cursor, pcm))
+            self.cursor_us = cursor + self._us(frames)
+        return actions
+
+    def clear(self, from_ts_us: int | None = None) -> list:
+        """`stream/clear`. Without a timestamp everything goes (queue and cursor) and the sink must be flushed; with one,
+        only queued chunks at or after it are discarded (audio already handed to the sink is past recall)."""
+        if from_ts_us is None:
+            self._queue.clear()
+            self._queued_bytes = 0
+            self.cursor_us = None
+            return [Flush()]
+        kept = deque(item for item in self._queue if item[0] < from_ts_us)
+        self._queued_bytes = sum(len(p) for _, p in kept)
+        self._queue = kept
+        return []

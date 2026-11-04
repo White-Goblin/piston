@@ -9,6 +9,10 @@ MAX_FRAME_BYTES = 1_000_000
 MAX_NAME_LEN = 64
 MAX_BOOT_ID_LEN = 32
 MEDIA_GROUP = "media"  # state group: now-playing details (protocol v3)
+SENDSPIN_GROUP = "sendspin"  # state group: the Sendspin background player's status (additive, no version bump)
+CMD_SENDSPIN_ENABLE = "sendspin_enable"  # command: turn the Sendspin player on or off
+SENDSPIN_STATUSES = ("disabled", "waiting", "connected", "streaming", "error")
+MAX_SENDSPIN_TEXT_LEN = 255
 CMD_GET_ARTWORK = "get_artwork"  # command: one chunk of the current artwork (protocol v3)
 ARTWORK_CHUNK_BYTES = 384 * 1024  # raw bytes per get_artwork result (about 512 KiB once base64 encoded)
 MAX_ARTWORK_BYTES = 2 * 1024 * 1024  # larger images are not offered at all
@@ -99,6 +103,34 @@ def artwork_request(data) -> tuple:
     _require(isinstance(offset, int) and not isinstance(offset, bool) and 0 <= offset <= MAX_ARTWORK_BYTES,
              "offset must be an integer between 0 and the artwork size limit")
     return art_id, offset
+
+
+def sendspin_group(data) -> dict:
+    """Validate and normalize the `sendspin` state group:
+    {enabled, status, name, port?, server_name?, error?}. Raises ProtocolError(bad_request)."""
+    _require(isinstance(data, dict), "sendspin must be an object")
+    _require(isinstance(data.get("enabled"), bool), "sendspin.enabled must be true or false")
+    _require(data.get("status") in SENDSPIN_STATUSES, f"sendspin.status must be one of {', '.join(SENDSPIN_STATUSES)}")
+    out = {"enabled": data["enabled"], "status": data["status"]}
+    name = data.get("name")
+    _require(isinstance(name, str) and len(name.encode()) <= MAX_NAME_LEN, "sendspin.name must be a string of at most 64 bytes")
+    out["name"] = name
+    port = data.get("port")
+    if port is not None:
+        _require(isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535, "sendspin.port must be 1-65535")
+        out["port"] = port
+    for key in ("server_name", "error"):
+        value = data.get(key)
+        if value is not None:
+            _require(isinstance(value, str) and len(value) <= MAX_SENDSPIN_TEXT_LEN, f"sendspin.{key} must be a string of at most {MAX_SENDSPIN_TEXT_LEN} characters")
+            out[key] = value
+    return out
+
+
+def sendspin_enable_request(data) -> bool:
+    """Validate `sendspin_enable` data and return the requested state; raises ProtocolError(bad_request)."""
+    _require(isinstance(data, dict) and isinstance(data.get("enabled"), bool), "enabled must be true or false")
+    return data["enabled"]
 
 
 def encode(frame: dict) -> str:

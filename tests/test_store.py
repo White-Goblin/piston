@@ -43,6 +43,10 @@ class StableSubsetTests(unittest.TestCase):
             "sensors": {"keys": ["cpu_load", "uptime"]},
         })
 
+    def test_a_group_with_no_storage_rule_is_not_stored(self):
+        # Groups added later (sendspin) are live state until a spec says otherwise
+        self.assertNotIn("sendspin", stable_subset({**LIVE, "sendspin": {"enabled": True, "status": "streaming"}}))
+
     def test_the_result_does_not_share_objects_with_the_live_state(self):
         subset = stable_subset(LIVE)
         subset["apps"]["apps"].append({"appid": "2"})

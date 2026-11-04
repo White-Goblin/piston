@@ -11,10 +11,11 @@ class WsTestClient:
         self.reader, self.writer = reader, writer
 
     @classmethod
-    async def connect(cls, port: int, path: str = "/ws"):
+    async def connect(cls, port: int, path: str = "/ws", headers: dict | None = None):
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         key = base64.b64encode(os.urandom(16)).decode()
-        writer.write(f"GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+        extra = "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items())
+        writer.write(f"GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n{extra}"
                      f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n".encode())
         await writer.drain()
         head = await reader.readuntil(b"\r\n\r\n")
@@ -23,13 +24,21 @@ class WsTestClient:
         return client
 
     async def send(self, obj, opcode: int = 1) -> None:
-        payload = obj.encode() if isinstance(obj, str) else json.dumps(obj).encode()
+        payload = bytes(obj) if isinstance(obj, (bytes, bytearray)) else obj.encode() if isinstance(obj, str) else json.dumps(obj).encode()
         mask = os.urandom(4)
         n = len(payload)
-        head = bytes([0x80 | opcode]) + (bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack("!H", n))
+        if n < 126:
+            head = bytes([0x80 | opcode, 0x80 | n])
+        elif n < 65536:
+            head = bytes([0x80 | opcode, 0x80 | 126]) + struct.pack("!H", n)
+        else:
+            head = bytes([0x80 | opcode, 0x80 | 127]) + struct.pack("!Q", n)
         masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
         self.writer.write(head + mask + masked)
         await self.writer.drain()
+
+    async def send_binary(self, data: bytes) -> None:
+        await self.send(data, opcode=2)
 
     async def recv_raw(self, timeout: float = 3):
         """(opcode, payload) of the next server frame."""

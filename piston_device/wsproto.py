@@ -1,4 +1,4 @@
-"""Minimal RFC 6455 server side over asyncio streams: handshake, text frames, ping/pong, close."""
+"""Minimal RFC 6455 server side over asyncio streams: handshake, text and binary frames, ping/pong, close."""
 import asyncio
 import base64
 import hashlib
@@ -17,19 +17,30 @@ class WsClosed(Exception):
         self.code, self.reason = code, reason
 
 
-async def handshake(reader, writer, path: str = "/ws", timeout: float = 5) -> bool:
-    """Read the HTTP upgrade request and answer it. Returns False (after replying) if it is not ours."""
+async def handshake(reader, writer, path: str = "/ws", timeout: float = 5, headers: dict | None = None,
+                    forbid: tuple = ()) -> bool:
+    """Read the HTTP upgrade request and answer it. Returns False (after replying) if it is not ours.
+
+    `headers`, when given, is filled with the request headers (lower-case names) so the caller can look at them.
+    A request that carries any header named in `forbid` (lower-case) is refused with 403 (Sendspin: `origin`)."""
     try:
         raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout)
     except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, asyncio.TimeoutError, ConnectionError):
         return False
     lines = raw.decode("latin-1").split("\r\n")
     parts = lines[0].split()
-    headers = {}
+    request = {}
     for line in lines[1:]:
         key, sep, value = line.partition(":")
         if sep:
-            headers[key.strip().lower()] = value.strip()
+            request[key.strip().lower()] = value.strip()
+    if headers is not None:
+        headers.update(request)
+    headers = request
+    if any(name in headers for name in forbid):
+        writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+        await _drain(writer)
+        return False
     ok = (
         len(parts) == 3 and parts[0] == "GET" and parts[1].split("?")[0] == path
         and headers.get("upgrade", "").lower() == "websocket"
@@ -74,6 +85,11 @@ async def send_text(writer, text: str) -> None:
     await writer.drain()
 
 
+async def send_binary(writer, data: bytes) -> None:
+    writer.write(frame(OP_BIN, bytes(data)))
+    await writer.drain()
+
+
 async def send_ping(writer) -> None:
     writer.write(frame(OP_PING))
     await writer.drain()
@@ -87,10 +103,18 @@ async def send_close(writer, code: int = 1000, reason: str = "") -> None:
         pass
 
 
-async def read_message(reader, writer, max_size: int = MAX_MESSAGE) -> str:
-    """Next complete text message. Answers pings; raises WsClosed on close, error or oversize.
+def _unmask(payload: bytes, mask: bytes) -> bytes:
+    """XOR the payload with the 4-byte mask (as big integers: far faster than a byte loop for audio-sized frames)."""
+    n = len(payload)
+    if not n:
+        return b""
+    key = (mask * (n // 4 + 1))[:n]
+    return (int.from_bytes(payload, "big") ^ int.from_bytes(key, "big")).to_bytes(n, "big")
 
-    Pongs are returned to the caller as an empty string so it can count them as activity."""
+
+async def read_frame(reader, writer, max_size: int = MAX_MESSAGE) -> tuple:
+    """Next complete message as (opcode, payload): OP_TEXT or OP_BIN with the payload bytes, or (OP_PONG, b"") so the
+    caller can count a pong as activity. Answers pings; raises WsClosed on close, error or oversize."""
     data, kind = b"", None
     while True:
         try:
@@ -105,32 +129,40 @@ async def read_message(reader, writer, max_size: int = MAX_MESSAGE) -> str:
             if not b1 & 0x80:
                 raise WsClosed(1002, "client frames must be masked")
             mask = await reader.readexactly(4)
-            payload = bytearray(await reader.readexactly(n))
+            payload = _unmask(await reader.readexactly(n), mask)
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             raise WsClosed(1006, "connection lost") from None
-        for i in range(n):
-            payload[i] ^= mask[i % 4]
         op, fin = b0 & 0x0F, bool(b0 & 0x80)
         if op == OP_PING:
-            writer.write(frame(OP_PONG, bytes(payload)))
+            writer.write(frame(OP_PONG, payload))
             await _drain(writer)
             continue
         if op == OP_PONG:
-            return ""
+            return OP_PONG, b""
         if op == OP_CLOSE:
             code = struct.unpack("!H", payload[:2])[0] if len(payload) >= 2 else 1005
             await send_close(writer, 1000)
             raise WsClosed(code)
         if op in (OP_TEXT, OP_BIN):
-            kind, data = op, bytes(payload)
+            kind, data = op, payload
         elif op == OP_CONT and kind is not None:
-            data += bytes(payload)
+            data += payload
         else:
             raise WsClosed(1002, "unexpected frame")
         if fin:
-            if kind != OP_TEXT:
-                raise WsClosed(1003, "text only")
-            try:
-                return data.decode()
-            except UnicodeDecodeError:
-                raise WsClosed(1007, "invalid text") from None
+            return kind, data
+
+
+async def read_message(reader, writer, max_size: int = MAX_MESSAGE) -> str:
+    """Next complete text message. Answers pings; raises WsClosed on close, error or oversize.
+
+    Pongs are returned to the caller as an empty string so it can count them as activity."""
+    kind, data = await read_frame(reader, writer, max_size)
+    if kind == OP_PONG:
+        return ""
+    if kind != OP_TEXT:
+        raise WsClosed(1003, "text only")
+    try:
+        return data.decode()
+    except UnicodeDecodeError:
+        raise WsClosed(1007, "invalid text") from None

@@ -38,6 +38,16 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(sensor.is_on)
         self.assertTrue(sensor.available)  # connectivity stays available so it can say "off"
 
+    async def test_a_group_the_integration_has_no_entities_for_is_kept_and_harmless(self):
+        # The protocol grows by adding groups (sendspin): an older integration must carry on when one arrives
+        self.coord.on_connection(True)
+        self.coord.on_state("device", {"device_id": "d1", "name": "Box"})
+        before = self.notified
+        self.coord.on_state("sendspin", {"enabled": True, "status": "waiting"})
+        self.assertEqual(self.coord.groups["sendspin"]["status"], "waiting")
+        self.assertEqual(self.coord.groups["device"]["name"], "Box")
+        self.assertEqual((self.coord.power, self.notified), ("on", before + 1))
+
     async def test_connect_disconnect_marks_entities_and_connectivity(self):
         sensor = ConnectivitySensor(self.coord)
         self.coord.on_connection(True)

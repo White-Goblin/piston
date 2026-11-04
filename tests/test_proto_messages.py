@@ -10,6 +10,11 @@ class ParseTests(unittest.TestCase):
                       m.state("apps", {"x": 1}, "boot1", 1), m.event("toast_click", {"id": "a"})):
             self.assertEqual(m.parse(m.encode(frame))["type"], frame["type"])
 
+    def test_a_state_frame_for_a_group_this_version_does_not_know_still_parses(self):
+        # Additive groups (sendspin) rely on peers accepting a state name they have no entities for
+        frame = m.parse(m.encode(m.state("not_a_group_yet", {"anything": 1}, "boot1", 1)))
+        self.assertEqual((frame["name"], frame["data"]), ("not_a_group_yet", {"anything": 1}))
+
     def test_defaults_data(self):
         self.assertEqual(m.parse('{"type":"cmd","id":1,"name":"quit"}')["data"], {})
 
@@ -138,3 +143,39 @@ class UpdateFrameTests(unittest.TestCase):
         for key, value in (("state", "nope"), ("state", None), ("version", "x"), ("reason", "other")):
             with self.assertRaises(m.ProtocolError, msg=f"{key}={value!r}"):
                 m.parse(m.encode({**good, key: value}))
+
+
+class SendspinShapeTests(unittest.TestCase):
+    GOOD = {"enabled": True, "status": "streaming", "name": "Box", "port": 8928, "server_name": "Music Assistant", "error": "none"}
+
+    def test_a_valid_group_is_returned_normalized(self):
+        self.assertEqual(m.sendspin_group(self.GOOD), self.GOOD)
+        self.assertEqual(m.sendspin_group({"enabled": False, "status": "disabled", "name": "Box", "extra": 1}),
+                         {"enabled": False, "status": "disabled", "name": "Box"})
+
+    def test_every_status_is_accepted_and_others_are_not(self):
+        for status in m.SENDSPIN_STATUSES:
+            m.sendspin_group({**self.GOOD, "status": status})
+        with self.assertRaises(m.ProtocolError):
+            m.sendspin_group({**self.GOOD, "status": "playing"})
+
+    def test_bad_groups_raise_bad_request(self):
+        bad = [None, [], {}, {**self.GOOD, "enabled": 1}, {**self.GOOD, "enabled": None}, {**self.GOOD, "name": 5},
+               {**self.GOOD, "name": "x" * 65}, {**self.GOOD, "name": "é" * 33}, {**self.GOOD, "port": 0},
+               {**self.GOOD, "port": 65536}, {**self.GOOD, "port": True}, {**self.GOOD, "port": "8928"},
+               {**self.GOOD, "server_name": 3}, {**self.GOOD, "error": "e" * 256}]
+        for data in bad:
+            with self.assertRaises(m.ProtocolError, msg=repr(data)) as cm:
+                m.sendspin_group(data)
+            self.assertEqual(cm.exception.code, m.BAD_REQUEST)
+
+    def test_name_limit_is_in_bytes(self):
+        m.sendspin_group({**self.GOOD, "name": "é" * 32})  # exactly 64 bytes
+
+    def test_enable_request(self):
+        self.assertIs(m.sendspin_enable_request({"enabled": True}), True)
+        self.assertIs(m.sendspin_enable_request({"enabled": False}), False)
+        for data in (None, {}, {"enabled": 1}, {"enabled": "yes"}, [True]):
+            with self.assertRaises(m.ProtocolError, msg=repr(data)) as cm:
+                m.sendspin_enable_request(data)
+            self.assertEqual(cm.exception.code, m.BAD_REQUEST)
