@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from decky_ha.proto import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, messages as m
+from piston_device.proto import MIN_PROTOCOL_VERSION, PROTOCOL_VERSION, messages as m
 
 
 class ParseTests(unittest.TestCase):
@@ -40,7 +40,7 @@ class ArtworkChunkSizeTests(unittest.TestCase):
     def test_worst_case_chunk_fits_in_a_frame(self):
         import base64
         import os
-        from decky_ha import wsproto
+        from piston_device import wsproto
         chunk = os.urandom(self.ARTWORK_CHUNK_BYTES)  # incompressible, JSON escaping adds nothing to base64
         frame = m.result_ok(4_000_000_000, {"content_type": "image/jpeg", "size": 2 * 1024 * 1024, "offset": 1_000_000,
                                            "data": base64.b64encode(chunk).decode(), "done": False})
@@ -118,7 +118,7 @@ class NegotiateTests(unittest.TestCase):
 
 class UpdateFrameTests(unittest.TestCase):
     SHA = "a" * 64
-    URL = "https://github.com/o/r/releases/download/v1.2.3/decky-home-assistant-1.2.3.zip"
+    URL = "https://github.com/o/r/releases/download/v1.2.3/piston-1.2.3.zip"
 
     def test_roundtrip(self):
         for frame in (m.update("1.2.3", self.URL, self.SHA), m.update_status("downloading", "1.2.3"),

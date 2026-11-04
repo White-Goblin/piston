@@ -10,14 +10,14 @@ from unittest import mock  # noqa: E402
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry  # noqa: E402
 
-from custom_components.decky_home_assistant import config_flow  # noqa: E402
-from custom_components.decky_home_assistant.const import DOMAIN  # noqa: E402
-from decky_ha.pairing import PairingManager  # noqa: E402
-from decky_ha.proto import messages  # noqa: E402
-from decky_ha.proto.messages import ProtocolError  # noqa: E402
-from decky_ha.server import ProtocolServer  # noqa: E402
+from custom_components.piston import config_flow  # noqa: E402
+from custom_components.piston.const import DOMAIN  # noqa: E402
+from piston_device.pairing import PairingManager  # noqa: E402
+from piston_device.proto import messages  # noqa: E402
+from piston_device.proto.messages import ProtocolError  # noqa: E402
+from piston_device.server import ProtocolServer  # noqa: E402
 from tests.stdlib_transport import StdTransport  # noqa: E402  (importing the tests package installs a fake `decky`)
-from decky_ha import artwork as device_artwork  # noqa: E402
+from piston_device import artwork as device_artwork  # noqa: E402
 
 SECRET = b"s" * 32
 DEVICE_ID = "dev123abc456"

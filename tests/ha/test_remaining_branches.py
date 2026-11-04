@@ -9,13 +9,13 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from custom_components.decky_home_assistant import coordinator as coordinator_module, discovery, pip as pip_module, store as store_module
-from custom_components.decky_home_assistant.client import ConnectionClosed, DeviceOffline
-from custom_components.decky_home_assistant.const import DOMAIN
-from custom_components.decky_home_assistant.diagnostics import async_get_config_entry_diagnostics
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
-from custom_components.decky_home_assistant.select import PipCameraSelect
-from custom_components.decky_home_assistant.transport import AiohttpTransport
+from custom_components.piston import coordinator as coordinator_module, discovery, pip as pip_module, store as store_module
+from custom_components.piston.client import ConnectionClosed, DeviceOffline
+from custom_components.piston.const import DOMAIN
+from custom_components.piston.diagnostics import async_get_config_entry_diagnostics
+from custom_components.piston.media_player import DeckyMediaPlayer
+from custom_components.piston.select import PipCameraSelect
+from custom_components.piston.transport import AiohttpTransport
 
 from conftest import DEVICE_ID
 from test_config_flow import announcement, discover
@@ -89,11 +89,11 @@ async def test_the_wake_listener_ignores_goodbyes_and_other_devices_and_survives
     lookup = mock.AsyncMock(side_effect=RuntimeError("zeroconf is busy"))
     listener = discovery.WakeListener(hass, DEVICE_ID, client, lambda *a: None, resolve=lookup)
     from zeroconf import ServiceStateChange
-    listener._on_service(None, "t", f"{DEVICE_ID}._deckyha._tcp.local.", ServiceStateChange.Removed)
-    listener._on_service(None, "t", "other._deckyha._tcp.local.", ServiceStateChange.Added)
+    listener._on_service(None, "t", f"{DEVICE_ID}._piston._tcp.local.", ServiceStateChange.Removed)
+    listener._on_service(None, "t", "other._piston._tcp.local.", ServiceStateChange.Added)
     await asyncio.sleep(0)
     assert client.wakes == 0
-    listener._on_service(None, "t", f"{DEVICE_ID}._deckyha._tcp.local.", ServiceStateChange.Added)
+    listener._on_service(None, "t", f"{DEVICE_ID}._piston._tcp.local.", ServiceStateChange.Added)
     await listener._task
     assert client.wakes == 1                                             # woken even though the lookup failed
 
@@ -114,8 +114,8 @@ async def test_media_player_edge_states(hass, loaded, device, wait_until):
 
 
 async def test_media_player_with_the_apps_still_from_the_last_run(hass, hass_storage, config_entry, device):
-    hass_storage[f"decky_home_assistant.{config_entry.entry_id}"] = {
-        "version": 1, "minor_version": 1, "key": f"decky_home_assistant.{config_entry.entry_id}",
+    hass_storage[f"piston.{config_entry.entry_id}"] = {
+        "version": 1, "minor_version": 1, "key": f"piston.{config_entry.entry_id}",
         "data": {"groups": {"apps": {"apps": [{"appid": "1", "name": "A"}]}}, "last_connected": None}}
     await device.stop()
     config_entry.add_to_hass(hass)
@@ -168,14 +168,14 @@ async def test_closing_an_unknown_session_and_waiting_for_signalling_work(hass, 
 # --- stored state --------------------------------------------------------------------------------------------------------------
 
 async def test_the_storage_format_migrates_old_versions_to_nothing_and_refuses_newer_ones(hass):
-    storage = store_module._Storage(hass, 1, "decky_home_assistant.test")
+    storage = store_module._Storage(hass, 1, "piston.test")
     assert await storage._async_migrate_func(0, 1, {"anything": 1}) == {}
     with pytest.raises(NotImplementedError):
         await storage._async_migrate_func(2, 1, {})
 
 
 async def test_stored_state_with_an_unexpected_shape_is_ignored_with_one_warning(hass, hass_storage, config_entry, device, caplog):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {"groups": ["not", "a", "mapping"]}}
     config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)

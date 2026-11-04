@@ -1,6 +1,6 @@
-"""Constants for the Decky Home Assistant integration."""
+"""Constants for the Piston integration."""
 
-DOMAIN = "decky_home_assistant"
+DOMAIN = "piston"
 PLATFORMS: list[str] = ["binary_sensor", "button", "event", "media_player", "notify", "select", "sensor", "switch", "update"]
 
 DEFAULT_PORT = 47830
@@ -8,10 +8,10 @@ DEFAULT_PORT = 47830
 # suspend is noticed within about 1.5 x this (22 s). The device pings every 20 s and drops a silent peer after 60 s,
 # so these do not interact: its own pings are what keep the device side alive.
 HEARTBEAT_SECONDS = 15
-SERVICE_TYPE = "_deckyha._tcp.local."
+SERVICE_TYPE = "_piston._tcp.local."
 
 # Plugin self-update (see docs/protocol.md): the integration's version is the version the plugin should run.
-RELEASE_REPO = "White-Goblin/steamos-media-control"
+RELEASE_REPO = "White-Goblin/piston"
 FIRST_LANE_VERSION = "0.4.0"  # the first plugin release that can be updated by the integration
 
 CONF_DEVICE_ID = "device_id"

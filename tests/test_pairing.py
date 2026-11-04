@@ -1,7 +1,7 @@
 import unittest
 
-from decky_ha.pairing import LOCKOUT_SECONDS, PairingManager
-from decky_ha.proto import code as code_mod, messages as m, pake
+from piston_device.pairing import LOCKOUT_SECONDS, PairingManager
+from piston_device.proto import code as code_mod, messages as m, pake
 
 
 class Clock:
@@ -103,8 +103,8 @@ class PairingTests(unittest.IsolatedAsyncioTestCase):
 
 class PairingOverWebsocketTests(unittest.IsolatedAsyncioTestCase):
     async def test_full_pairing_then_authenticated_reconnect(self):
-        from decky_ha.proto import PROTOCOL_VERSION, auth
-        from decky_ha.server import ProtocolServer
+        from piston_device.proto import PROTOCOL_VERSION, auth
+        from piston_device.server import ProtocolServer
         from . import wsclient
 
         box = {"secret": b""}

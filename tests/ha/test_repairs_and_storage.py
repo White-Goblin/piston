@@ -6,8 +6,8 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
-import custom_components.decky_home_assistant as integration
-from custom_components.decky_home_assistant.const import DOMAIN
+import custom_components.piston as integration
+from custom_components.piston.const import DOMAIN
 
 from conftest import DEVICE_ID
 
@@ -38,7 +38,7 @@ async def test_unreachable_for_over_a_day_raises_a_warning_that_clears_on_the_ne
 
 
 async def test_the_hourly_check_runs_on_the_real_timer_and_keeps_the_stored_time_fresh(hass, hass_storage, loaded, config_entry):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     hass_storage.pop(key, None)
     async_fire_time_changed(hass, dt_util.utcnow() + timedelta(hours=1, seconds=5))
     await hass.async_block_till_done()
@@ -58,8 +58,8 @@ async def test_removing_the_entry_removes_the_unreachable_issue(hass, config_ent
 
 
 async def test_a_device_offline_after_a_restart_for_longer_than_a_day_is_flagged_from_the_stored_time(hass, hass_storage, config_entry, device):
-    hass_storage[f"decky_home_assistant.{config_entry.entry_id}"] = {
-        "version": 1, "minor_version": 1, "key": f"decky_home_assistant.{config_entry.entry_id}",
+    hass_storage[f"piston.{config_entry.entry_id}"] = {
+        "version": 1, "minor_version": 1, "key": f"piston.{config_entry.entry_id}",
         "data": {"groups": {}, "last_connected": (dt_util.utcnow() - timedelta(hours=30)).isoformat()}}
     await device.stop()
     config_entry.add_to_hass(hass)
@@ -97,7 +97,7 @@ def write_pending(coordinator) -> bool:
 
 
 async def test_a_change_in_the_stable_state_is_saved_through_a_delayed_write(hass, hass_storage, config_entry, loaded, device, wait_until):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     await write_now(hass, loaded)                                        # what the connection itself changed
     hass_storage.pop(key, None)
     device.push("apps", {"apps": [{"appid": "1", "name": "A", "kind": "steam"}], "running": False})
@@ -108,7 +108,7 @@ async def test_a_change_in_the_stable_state_is_saved_through_a_delayed_write(has
 
 
 async def test_readings_that_change_do_not_request_writes(hass, hass_storage, config_entry, loaded, device, wait_until):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     device.push("sensors", {"cpu_load": 1})
     await wait_until(lambda: getattr(hass.states.get("sensor.box_cpu_load"), "state", None) == "1")
     await write_now(hass, loaded)                                        # the new sensor key is stable data: saved once
@@ -123,7 +123,7 @@ async def test_readings_that_change_do_not_request_writes(hass, hass_storage, co
 
 
 async def test_stopping_home_assistant_saves_the_state(hass, hass_storage, config_entry, loaded):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     hass_storage.pop(key, None)
     hass.bus.async_fire("homeassistant_stop")
     await hass.async_block_till_done()
@@ -131,7 +131,7 @@ async def test_stopping_home_assistant_saves_the_state(hass, hass_storage, confi
 
 
 async def test_state_from_a_newer_version_or_a_bad_shape_is_ignored_with_one_warning(hass, hass_storage, config_entry, device, caplog):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     hass_storage[key] = {"version": 99, "minor_version": 1, "key": key, "data": {"groups": {"apps": {"apps": [{"appid": "9", "name": "X"}]}}}}
     config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)
@@ -143,7 +143,7 @@ async def test_state_from_a_newer_version_or_a_bad_shape_is_ignored_with_one_war
 
 
 async def test_an_older_stored_version_and_a_bad_timestamp_are_handled_quietly(hass, hass_storage, config_entry, device, caplog):
-    key = f"decky_home_assistant.{config_entry.entry_id}"
+    key = f"piston.{config_entry.entry_id}"
     hass_storage[key] = {"version": 1, "minor_version": 1, "key": key, "data": {"groups": {}, "last_connected": "yesterday"}}
     config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(config_entry.entry_id)

@@ -2,8 +2,8 @@ import unittest
 
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant.button import BUTTONS, DeckyPowerButton
-from custom_components.decky_home_assistant.switch import DesktopModeSwitch
+from custom_components.piston.button import BUTTONS, DeckyPowerButton
+from custom_components.piston.switch import DesktopModeSwitch
 from .entityutil import connect, make_coordinator
 
 

@@ -4,12 +4,12 @@ import unittest
 from unittest import mock
 
 from . import use_temp_settings_dir
-from decky_ha import state as state_module
-from decky_ha.controllers import ControllersMixin
-from decky_ha.proto import PROTOCOL_VERSION, sensors as sensor_table
-from decky_ha.sensors import SensorsMixin
-from decky_ha.settings import SettingsMixin
-from decky_ha.state import StateMixin, detect_session
+from piston_device import state as state_module
+from piston_device.controllers import ControllersMixin
+from piston_device.proto import PROTOCOL_VERSION, sensors as sensor_table
+from piston_device.sensors import SensorsMixin
+from piston_device.settings import SettingsMixin
+from piston_device.state import StateMixin, detect_session
 
 
 class FakeServer:
@@ -77,7 +77,7 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
             coro.close()
             raise asyncio.CancelledError
 
-        with mock.patch("decky_ha.sensors.asyncio.wait_for", fake_wait):
+        with mock.patch("piston_device.sensors.asyncio.wait_for", fake_wait):
             with self.assertRaises(asyncio.CancelledError):
                 await self.h._sensor_loop()
         self.assertEqual(waits, [30])
@@ -92,7 +92,7 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
             coro.close()
             raise asyncio.CancelledError
 
-        with mock.patch("decky_ha.sensors.asyncio.wait_for", fake_wait):
+        with mock.patch("piston_device.sensors.asyncio.wait_for", fake_wait):
             with self.assertRaises(asyncio.CancelledError):
                 await self.h._sensor_loop()
         self.assertNotIn("sensors", self.h.groups)
@@ -126,10 +126,10 @@ class StateTests(unittest.IsolatedAsyncioTestCase):
 
     def test_hid_battery_entries_are_read(self):
         base = os.path.join(os.environ.get("TMPDIR", "/tmp"), "psdir")
-        with mock.patch("decky_ha.controllers.POWER_SUPPLY", base), mock.patch.object(
+        with mock.patch("piston_device.controllers.POWER_SUPPLY", base), mock.patch.object(
                 Host, "_read_file", staticmethod(lambda path: {"capacity": "52", "status": "Discharging",
                                                                            "model_name": "PRO2 Black"}.get(path.rsplit("/", 1)[1], ""))), \
-                mock.patch("decky_ha.controllers.os.listdir", lambda p: ["hid-aa:bb:cc:dd:ee:ff-battery", "BAT0"]):
+                mock.patch("piston_device.controllers.os.listdir", lambda p: ["hid-aa:bb:cc:dd:ee:ff-battery", "BAT0"]):
             found = self.h._read_hid_batteries()
         self.assertEqual(found["aabbccddeeff"], {"name": "PRO2 Black", "battery": 52, "charging": False, "wireless": True})
 
@@ -275,13 +275,13 @@ class ResumeTests(unittest.IsolatedAsyncioTestCase):
 
 class EnableCommandTests(unittest.TestCase):
     def test_wired_command(self):
-        from decky_ha.wol import enable_command
+        from piston_device.wol import enable_command
         info = {"interface": "enp5s0", "kind": "wired", "supported": True, "wol_enabled": False, "connection": "Wired connection 1"}
         self.assertEqual(enable_command(info), "sudo nmcli connection modify 'Wired connection 1' 802-3-ethernet.wake-on-lan magic"
                                                " && sudo nmcli device reapply enp5s0")
 
     def test_wireless_command_and_awkward_names_are_quoted(self):
-        from decky_ha.wol import enable_command
+        from piston_device.wol import enable_command
         info = {"interface": "wlan0", "kind": "wireless", "supported": True, "wol_enabled": False, "connection": "Bob's \"Wi-Fi\""}
         cmd = enable_command(info)
         self.assertIn("802-11-wireless.wake-on-wlan magic", cmd)
@@ -290,14 +290,14 @@ class EnableCommandTests(unittest.TestCase):
         self.assertEqual(shlex.split(cmd.split(" && ")[0])[4], "Bob's \"Wi-Fi\"")
 
     def test_no_command_when_nothing_to_do_or_nothing_possible(self):
-        from decky_ha.wol import enable_command
+        from piston_device.wol import enable_command
         base = {"interface": "enp5s0", "kind": "wired", "supported": True, "wol_enabled": False, "connection": "c"}
         for change in ({"wol_enabled": True}, {"supported": False}, {"connection": ""}, {"interface": ""}):
             self.assertEqual(enable_command({**base, **change}), "", change)
 
     def test_the_panel_callable_adds_the_command(self):
         from unittest import mock
-        from decky_ha import wol as wol_module
+        from piston_device import wol as wol_module
         use_temp_settings_dir()
         h = type("H", (wol_module.WolMixin,), {})()
         info = {"interface": "enp5s0", "kind": "wired", "supported": True, "wol_enabled": False, "connection": "c"}

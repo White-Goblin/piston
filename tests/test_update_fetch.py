@@ -9,8 +9,8 @@ import unittest.mock
 import urllib.error
 import zipfile
 
-from decky_ha import update_check as uc
-from decky_ha import update_fetch as uf
+from piston_device import update_check as uc
+from piston_device import update_fetch as uf
 
 from . import ROOT
 
@@ -125,8 +125,8 @@ class SslContextTests(unittest.TestCase):
 class RevertCopyTests(unittest.TestCase):
     def make_plugin(self, root, version="1.0.0"):
         for path, text in {"main.py": "x", "plugin.json": "{}", "LICENSE": "l", "package.json": json.dumps({"version": version}),
-                           "dist/index.js": "j", "dist/index.js.map": "m", "decky_ha/a.py": "a",
-                           "decky_ha/__pycache__/a.pyc": "c", "py_modules/.keep": ""}.items():
+                           "dist/index.js": "j", "dist/index.js.map": "m", "piston_device/a.py": "a",
+                           "piston_device/__pycache__/a.pyc": "c", "py_modules/.keep": ""}.items():
             full = os.path.join(root, path)
             os.makedirs(os.path.dirname(full), exist_ok=True)
             with open(full, "w") as f:
@@ -139,8 +139,8 @@ class RevertCopyTests(unittest.TestCase):
             with zipfile.ZipFile(target) as z:
                 names = sorted(z.namelist())
             uc.validate_archive(target, "1.0.0")
-        self.assertEqual(names, sorted(f"Decky Home Assistant/{n}" for n in (
-            "LICENSE", "decky_ha/a.py", "dist/index.js", "main.py", "package.json", "plugin.json", "py_modules/.keep")))
+        self.assertEqual(names, sorted(f"Piston/{n}" for n in (
+            "LICENSE", "piston_device/a.py", "dist/index.js", "main.py", "package.json", "plugin.json", "py_modules/.keep")))
 
     def test_only_one_copy_remains(self):
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as data:

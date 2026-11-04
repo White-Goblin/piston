@@ -1,9 +1,9 @@
 import hashlib
 import unittest
 
-from custom_components.decky_home_assistant import update_logic as ul
-from custom_components.decky_home_assistant.const import FIRST_LANE_VERSION, RELEASE_REPO
-from decky_ha import update_check
+from custom_components.piston import update_logic as ul
+from custom_components.piston.const import FIRST_LANE_VERSION, RELEASE_REPO
+from piston_device import update_check
 
 H = "a" * 64
 
@@ -44,7 +44,7 @@ class DecideTests(unittest.TestCase):
 
 
 class SumsTests(unittest.IsolatedAsyncioTestCase):
-    SUMS = f"{H}  decky-home-assistant-0.4.1.zip\n{'b' * 64}  other.txt\n"
+    SUMS = f"{H}  piston-0.4.1.zip\n{'b' * 64}  other.txt\n"
 
     def test_parse_handles_sha256sum_output(self):
         text = f"{H}  a.zip\n{'B' * 64} *b.zip\n\nnot a line\n{'c' * 63}  short.zip\n"

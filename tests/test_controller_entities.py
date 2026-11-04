@@ -2,8 +2,8 @@ import unittest
 
 from homeassistant.config_entries import ConfigEntry
 
-from custom_components.decky_home_assistant import binary_sensor, sensor
-from custom_components.decky_home_assistant.entity import controller_labels
+from custom_components.piston import binary_sensor, sensor
+from custom_components.piston.entity import controller_labels
 from .entityutil import connect, make_coordinator
 from .test_sensors import Collector
 

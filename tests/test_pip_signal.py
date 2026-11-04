@@ -3,13 +3,13 @@ import json
 import unittest
 
 from . import fake as fake_decky, use_temp_settings_dir
-from decky_ha.control import ControlMixin
-from decky_ha.http_server import HttpServerMixin
-from decky_ha.pip import PipMixin
-from decky_ha.pip_signal import MAX_QUEUE, PipSignalMixin
-from decky_ha.proto import messages as m
-from decky_ha.settings import SettingsMixin
-from decky_ha.state import StateMixin
+from piston_device.control import ControlMixin
+from piston_device.http_server import HttpServerMixin
+from piston_device.pip import PipMixin
+from piston_device.pip_signal import MAX_QUEUE, PipSignalMixin
+from piston_device.proto import messages as m
+from piston_device.settings import SettingsMixin
+from piston_device.state import StateMixin
 
 SESSION = "sess-abc12345"
 

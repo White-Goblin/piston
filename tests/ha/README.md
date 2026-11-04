@@ -18,14 +18,14 @@ uv pip install --python .venv-ha/bin/python -r tests/ha/requirements.txt
 
 ## What the coverage number covers
 
-`.coveragerc` measures the `custom_components/decky_home_assistant` package and leaves out `proto/`, which is a verbatim copy of
-`decky_ha/proto` (kept identical by `scripts/sync_proto.py` and a test); much of it only runs on the device. Counting the copy as
+`.coveragerc` measures the `custom_components/piston` package and leaves out `proto/`, which is a verbatim copy of
+`piston_device/proto` (kept identical by `scripts/sync_proto.py` and a test); much of it only runs on the device. Counting the copy as
 well still gives 95%. `test_client_protocol.py` runs the client's own unit tests (they use no Home Assistant classes) under this
 suite so the pairing, authentication and reconnect paths that need a misbehaving or absent device are included; without them the
 configured number is 97%.
 
 `requirements.txt` pins the release that matches the Home Assistant version the integration was verified against
-(2026.10.4). The device is played by the real `decky_ha` protocol server on the loopback interface, so the tests
+(2026.10.4). The device is played by the real `piston_device` protocol server on the loopback interface, so the tests
 exercise the real protocol end to end.
 
 The fixtures also fail a test that leaves a timer or task running after the entry is unloaded, which is how

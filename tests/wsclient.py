@@ -1,4 +1,4 @@
-"""Tiny websocket test client (masked frames) for exercising decky_ha.server."""
+"""Tiny websocket test client (masked frames) for exercising piston_device.server."""
 import asyncio
 import base64
 import json

@@ -6,7 +6,7 @@ import stat
 import unittest
 
 from . import use_temp_settings_dir
-from decky_ha.settings import SettingsMixin, clean_apps, default_settings
+from piston_device.settings import SettingsMixin, clean_apps, default_settings
 
 
 class Settings(SettingsMixin):

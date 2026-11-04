@@ -21,7 +21,7 @@ from typing import Awaitable, Callable
 import decky
 
 MONITOR_ARGV = ("gdbus", "monitor", "--system", "--dest", "org.freedesktop.login1", "--object-path", "/org/freedesktop/login1")
-INHIBIT_ARGV = ("systemd-inhibit", "--what=sleep:shutdown", "--mode=delay", "--who=Decky Home Assistant",
+INHIBIT_ARGV = ("systemd-inhibit", "--what=sleep:shutdown", "--mode=delay", "--who=Piston",
                 "--why=Tell Home Assistant before the device goes down", "cat")
 SIGNAL = re.compile(r"Manager\.(PrepareForSleep|PrepareForShutdown) \((true|false)")
 INHIBIT_CAP_SECONDS = 2.0

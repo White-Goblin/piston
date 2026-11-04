@@ -32,7 +32,7 @@ async def resolve_address(hass, device_id: str) -> tuple[str, int] | None:
 
 
 def device_id_from_name(name: str) -> str | None:
-    """"abc123def456._deckyha._tcp.local." -> "abc123def456" (the device advertises under its id)."""
+    """"abc123def456._piston._tcp.local." -> "abc123def456" (the device advertises under its id)."""
     suffix = "." + SERVICE_TYPE
     return name[: -len(suffix)].lower() if name.lower().endswith(suffix) else None
 

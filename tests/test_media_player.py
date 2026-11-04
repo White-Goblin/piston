@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from homeassistant.components.media_player import MediaPlayerEntityFeature as F, MediaPlayerState as S, MediaType
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant.client import CommandError
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
+from custom_components.piston.client import CommandError
+from custom_components.piston.media_player import DeckyMediaPlayer
 from .entityutil import connect, make_coordinator
 
 APPS = [{"appid": "2451505133", "name": "Jellyfin", "kind": "shortcut"}, {"appid": "250900", "name": "Isaac", "kind": "steam"}]

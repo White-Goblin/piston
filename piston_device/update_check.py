@@ -10,8 +10,8 @@ import zipfile
 
 from .proto import messages as m
 
-RELEASE_REPO = "White-Goblin/steamos-media-control"
-PLUGIN_DIR = "Decky Home Assistant"
+RELEASE_REPO = "White-Goblin/piston"
+PLUGIN_DIR = "Piston"
 MAX_ZIP_BYTES = 50 * 1024 * 1024          # the download
 MAX_UNPACKED_BYTES = 200 * 1024 * 1024    # what the archive claims to hold
 REQUIRED_FILES = ("main.py", "plugin.json", "package.json")
@@ -26,7 +26,7 @@ class UpdateRefused(Exception):
 
 
 def asset_url(version: str, repo: str = RELEASE_REPO) -> str:
-    return f"https://github.com/{repo}/releases/download/v{version}/decky-home-assistant-{version}.zip"
+    return f"https://github.com/{repo}/releases/download/v{version}/piston-{version}.zip"
 
 
 def version_key(version: str) -> tuple:

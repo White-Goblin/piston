@@ -1,4 +1,4 @@
-"""Decky Home Assistant: control a SteamOS / Decky Loader device."""
+"""Piston: control a SteamOS / Decky Loader device."""
 from __future__ import annotations
 
 import logging

@@ -3,8 +3,8 @@ import re
 import unittest
 from datetime import datetime, timezone
 
-from custom_components.decky_home_assistant import diagnostics
-from custom_components.decky_home_assistant.diagnostics import TO_REDACT, async_get_config_entry_diagnostics
+from custom_components.piston import diagnostics
+from custom_components.piston.diagnostics import TO_REDACT, async_get_config_entry_diagnostics
 from .entityutil import connect, make_coordinator
 
 SECRET = "ab" * 32

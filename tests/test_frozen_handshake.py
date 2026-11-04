@@ -4,8 +4,8 @@ import os
 import tempfile
 import unittest
 
-from decky_ha import version as version_module
-from decky_ha.proto import LANE_VERSION, auth, messages as m
+from piston_device import version as version_module
+from piston_device.proto import LANE_VERSION, auth, messages as m
 
 from . import ROOT
 
@@ -29,7 +29,7 @@ class FrozenHandshake(unittest.TestCase):
         self.assertEqual(proof, auth.prove(b"k" * 32, nonce, nonce, auth.ROLE_HA))
 
     def test_the_close_codes(self):
-        from decky_ha import server
+        from piston_device import server
         self.assertEqual((server.CLOSE_VERSION, server.CLOSE_REPLACED, server.CLOSE_UNAUTHORIZED, server.CLOSE_BAD_REQUEST),
                          (4000, 4001, 4002, 4003))
 

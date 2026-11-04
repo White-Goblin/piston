@@ -6,17 +6,17 @@ declare const DeckyPluginLoader: any;
 declare global {
   interface Window {
     /** Set once per page load of the Steam interface; a plugin reload does not reset it. */
-    __deckyHaUpdateSeen?: boolean;
+    __pistonUpdateSeen?: boolean;
   }
 }
 
-const PLUGIN_NAME = "Decky Home Assistant";
+const PLUGIN_NAME = "Piston";
 const INSTALL_ROUTE = "utilities/install_plugin";
 const INSTALL_TYPE_REINSTALL = 1;
 const POLL_MS = 10_000;
 const REVERT_WINDOW_MS = 5 * 60_000;       // the new version has this long after it is installed to confirm itself
 const GIVE_UP_MS = 2 * 60 * 60_000;        // forget an outstanding request that never resolved
-const STORAGE_KEY = "deckyha.update.outstanding";
+const STORAGE_KEY = "piston.update.outstanding";
 const CALL_TIMEOUT_MS = 8_000;             // a call to a plugin backend that has died never settles (found live): give up on it
 
 interface PendingUpdate {
@@ -54,7 +54,7 @@ const withTimeout = <T,>(promise: Promise<T>, ms = CALL_TIMEOUT_MS): Promise<T> 
     );
   });
 
-const log = (...args: unknown[]) => console.log("[DeckyHA][update]", ...args);
+const log = (...args: unknown[]) => console.log("[Piston][update]", ...args);
 
 const loadOutstanding = (): Outstanding | null => {
   try {
@@ -98,8 +98,8 @@ export const registerUpdateInstaller = () => {
   let busy = false;
   let outstanding = loadOutstanding();
   // First registration since the Steam interface (re)loaded: a dialog opened before is gone, so ask for it again
-  const freshPage = !window.__deckyHaUpdateSeen;
-  window.__deckyHaUpdateSeen = true;
+  const freshPage = !window.__pistonUpdateSeen;
+  window.__pistonUpdateSeen = true;
 
   /** Ask Decky Loader to show its install dialog for this update and tell the backend. */
   const ask = async (pending: PendingUpdate, showToast: boolean) => {

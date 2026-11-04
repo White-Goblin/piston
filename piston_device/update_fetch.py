@@ -21,7 +21,7 @@ CA_BUNDLES = ("/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem", "/etc/c
               "/etc/pki/tls/certs/ca-bundle.crt")
 # What ships (mirrors scripts/package_plugin.py; a test keeps the two in step)
 TOP_FILES = ("main.py", "plugin.json", "package.json", "LICENSE")
-TREES = ("dist", "decky_ha", "py_modules")
+TREES = ("dist", "piston_device", "py_modules")
 SKIP_PARTS = {"__pycache__"}
 SKIP_SUFFIXES = (".map", ".pyc")
 
@@ -53,7 +53,7 @@ def make_ssl_context(bundles=CA_BUNDLES) -> ssl.SSLContext:
 
 def default_opener(url: str, timeout: float):
     opener = urllib.request.build_opener(_Redirects, urllib.request.HTTPSHandler(context=make_ssl_context()))
-    return opener.open(urllib.request.Request(url, headers={"User-Agent": "decky-home-assistant"}), timeout=timeout)
+    return opener.open(urllib.request.Request(url, headers={"User-Agent": "piston"}), timeout=timeout)
 
 
 def download(url: str, dest: str, *, opener=default_opener, timeout: float = DOWNLOAD_TIMEOUT, cap: int = MAX_ZIP_BYTES,

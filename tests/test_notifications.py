@@ -3,8 +3,8 @@ import unittest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.exceptions import HomeAssistantError
 
-from custom_components.decky_home_assistant import event as event_platform, notify as notify_platform
-from custom_components.decky_home_assistant.client import CommandError
+from custom_components.piston import event as event_platform, notify as notify_platform
+from custom_components.piston.client import CommandError
 from tests.ha_stubs import PLATFORM
 from .entityutil import connect, make_coordinator
 from .test_sensors import Collector

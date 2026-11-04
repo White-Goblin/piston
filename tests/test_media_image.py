@@ -3,11 +3,11 @@ import base64
 import os
 import unittest
 
-from custom_components.decky_home_assistant.artwork import ArtworkFetcher
-from custom_components.decky_home_assistant.client import CommandError, DeviceOffline
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
-from decky_ha import artwork as device_art
-from decky_ha.proto import messages as m
+from custom_components.piston.artwork import ArtworkFetcher
+from custom_components.piston.client import CommandError, DeviceOffline
+from custom_components.piston.media_player import DeckyMediaPlayer
+from piston_device import artwork as device_art
+from piston_device.proto import messages as m
 from .entityutil import connect, make_coordinator
 
 

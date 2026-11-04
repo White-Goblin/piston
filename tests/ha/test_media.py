@@ -3,7 +3,7 @@ import os
 
 from homeassistant.components.media_player import DATA_COMPONENT
 
-from decky_ha.proto.messages import ARTWORK_CHUNK_BYTES
+from piston_device.proto.messages import ARTWORK_CHUNK_BYTES
 
 APPS = [{"appid": "250900", "name": "Isaac", "kind": "steam"}, {"appid": "2451505133", "name": "Jellyfin", "kind": "shortcut"}]
 RUNNING = {"apps": APPS, "running": True, "appid": "250900", "name": "Isaac", "screen": "game"}

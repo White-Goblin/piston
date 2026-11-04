@@ -1,10 +1,12 @@
-# Decky Home Assistant
+# Piston
 
-Control a SteamOS device from [Home Assistant](https://www.home-assistant.io/). A custom integration (installed through [HACS](https://hacs.xyz/)) gives you a media player, sensors, notifications and camera picture-in-picture for a Steam Deck, Steam Machine or any other [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) device. A small companion plugin on the device does the work there.
+**Media and control for SteamOS devices in your living room.** Piston pushes commands from Home Assistant to the box under the TV: launch an app, press play, wake it, put it to sleep, show a camera on screen.
+
+Control a SteamOS device from [Home Assistant](https://www.home-assistant.io/). A custom integration (installed through the Home Assistant Marketplace or [HACS](https://hacs.xyz/)) gives you a media player, sensors, notifications and camera picture-in-picture for a Steam Deck, Steam Machine or any other [Decky Loader](https://github.com/SteamDeckHomebrew/decky-loader) device. A small companion plugin on the device does the work there.
 
 The device is found automatically and paired with a short code shown on its screen.
 
-Tested with Home Assistant 2026.10 and a Steam Machine running SteamOS.
+Requires Home Assistant 2026.10 or newer (the version it was developed and tested against, with a Steam Machine running SteamOS). It is not tested on older versions.
 
 ## What you get
 
@@ -23,15 +25,15 @@ Tested with Home Assistant 2026.10 and a Steam Machine running SteamOS.
 
 Actions (Developer tools, automations and scripts):
 
-- `decky_home_assistant.show_toast` on the Toast entity: `message`, optional `title`, `duration` (seconds), `icon` (bell, bolt, camera, car, door, fire, home, light, lock, motion, temperature, warning, water), `silent`, and `id` (comes back in the click event so you can tell toasts apart).
-- `decky_home_assistant.show_pip` on the PiP camera entity: `camera` (any camera entity) and optional `position`, `size`, `duration` and `mute`, overriding the options for that call. A new camera replaces the one showing.
-- `decky_home_assistant.hide_pip` on the PiP camera entity.
+- `piston.show_toast` on the Toast entity: `message`, optional `title`, `duration` (seconds), `icon` (bell, bolt, camera, car, door, fire, home, light, lock, motion, temperature, warning, water), `silent`, and `id` (comes back in the click event so you can tell toasts apart).
+- `piston.show_pip` on the PiP camera entity: `camera` (any camera entity) and optional `position`, `size`, `duration` and `mute`, overriding the options for that call. A new camera replaces the one showing.
+- `piston.hide_pip` on the PiP camera entity.
 
 ## Install
 
-1. **Integration.** In HACS open the menu, choose Custom repositories, add `https://github.com/White-Goblin/steamos-media-control` as category Integration, then download Decky Home Assistant and restart Home Assistant.
-2. **Plugin on the device.** Download `decky-home-assistant-<version>.zip` from the [releases](https://github.com/White-Goblin/steamos-media-control/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
-3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Decky Home Assistant; the panel shows a 6-digit code. Enter it in Home Assistant. Done: the entities appear.
+1. **Integration.** On Home Assistant 2026.11 or newer open Settings > Marketplace; on older versions open HACS. Add `https://github.com/White-Goblin/piston` as a custom repository of category Integration (the menu in the top right), then download Piston and restart Home Assistant. Once Piston is in the default catalog you can simply search for it.
+2. **Plugin on the device.** Download `piston-<version>.zip` from the [releases](https://github.com/White-Goblin/piston/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
+3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Piston; the panel shows a 6-digit code. Enter it in Home Assistant. Done: the entities appear.
 4. **Choose your apps.** In the plugin panel, under Apps in Home Assistant, add the Steam games and non-Steam apps you want as media player sources.
 5. **Wake on LAN** (to turn the device on from Home Assistant). Set this up on the device yourself, see [Wake on LAN](#wake-on-lan) below.
 
@@ -51,7 +53,7 @@ To change the address later (the device got a new IP address and Home Assistant 
 
 ## Options
 
-Settings > Devices & services > Decky Home Assistant > Configure:
+Settings > Devices & services > Piston > Configure:
 
 | Option | Default | What it does |
 |---|---|---|
@@ -68,7 +70,7 @@ Settings > Devices & services > Decky Home Assistant > Configure:
 From version 0.4.0 the plugin on the device follows the integration: when you update the integration in HACS and restart Home Assistant, the device is brought to the same version.
 
 - The **Plugin update** entity (on the device page) shows the plugin version on the device and the version of the integration, with an Install button. **Install plugin updates automatically** (a switch, on by default) lets Home Assistant start the update as soon as the device connects; turn it off to start updates yourself with Install.
-- **You approve the install on the device.** Decky Loader always asks first: a dialog ("Install Decky Home Assistant") appears in the Steam interface and you tap OK. While it waits, the update entity says so (in its release summary) and a Repairs item, "Approve the plugin update on ...", reminds you. The device also shows a toast ("Plugin update ready"); tapping it shows the dialog again, which helps if the dialog disappeared (for example after Steam restarted). If the device is in desktop mode, switch it to game mode: the dialog appears there. If you cancel or ignore it, after 30 minutes the update is marked as not approved (a Repairs item says so); press Install to ask again.
+- **You approve the install on the device.** Decky Loader always asks first: a dialog ("Install Piston") appears in the Steam interface and you tap OK. While it waits, the update entity says so (in its release summary) and a Repairs item, "Approve the plugin update on ...", reminds you. The device also shows a toast ("Plugin update ready"); tapping it shows the dialog again, which helps if the dialog disappeared (for example after Steam restarted). If the device is in desktop mode, switch it to game mode: the dialog appears there. If you cancel or ignore it, after 30 minutes the update is marked as not approved (a Repairs item says so); press Install to ask again.
 - The device downloads the release from GitHub itself and checks it against the checksum in the release's `SHA256SUMS` file before it gives it to Decky Loader. A compromised GitHub release would not be noticed by this check. If something goes wrong the old plugin keeps running; a failed update is shown in Repairs and is not retried until you press Install or a newer version is out.
 - If a new plugin installs but does not start, the device asks Decky Loader to put the previous version back (you approve that dialog too). If the plugin is ever too broken to do even that, install the zip from the releases page by hand as in step 2.
 - Plugins older than 0.4.0 cannot be updated this way and still show the version-mismatch Repairs item: install the zip once by hand.
@@ -105,7 +107,7 @@ The Wake on LAN section of the plugin panel shows your adapter, its MAC address 
 
 ## Troubleshooting
 
-- **The device does not show up.** Home Assistant and the device are probably on different networks or VLANs and mDNS (multicast DNS) does not cross. Use Settings > Devices & services > Add integration > Decky Home Assistant and type the device's address instead.
+- **The device does not show up.** Home Assistant and the device are probably on different networks or VLANs and mDNS (multicast DNS) does not cross. Use Settings > Devices & services > Add integration > Piston and type the device's address instead.
 - **"Too many wrong codes".** The device waits a minute and then shows a new code.
 - **Entities are unavailable.** The device is asleep, off, or Home Assistant cannot reach port 47830. Check the Connectivity entity and the plugin panel.
 - **I removed the device or reinstalled Home Assistant.** In the plugin panel press Reset pairing, then pair again.

@@ -6,27 +6,27 @@ import unittest
 
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
-from custom_components.decky_home_assistant import const
-from custom_components.decky_home_assistant.client import CommandError, DeviceOffline
-from custom_components.decky_home_assistant.entity import command_failure
-from custom_components.decky_home_assistant.media_player import DeckyMediaPlayer
-from custom_components.decky_home_assistant.proto import messages as m
-from custom_components.decky_home_assistant.select import PipCameraSelect
+from custom_components.piston import const
+from custom_components.piston.client import CommandError, DeviceOffline
+from custom_components.piston.entity import command_failure
+from custom_components.piston.media_player import DeckyMediaPlayer
+from custom_components.piston.proto import messages as m
+from custom_components.piston.select import PipCameraSelect
 from .entityutil import connect, make_coordinator
 
-PACKAGE = os.path.join(os.path.dirname(__file__), "..", "custom_components", "decky_home_assistant")
+PACKAGE = os.path.join(os.path.dirname(__file__), "..", "custom_components", "piston")
 READ_ONLY = {"binary_sensor", "sensor", "event"}
 
 
 class ParallelUpdatesTests(unittest.TestCase):
     def test_every_platform_sets_it_explicitly(self):
         for platform in const.PLATFORMS:
-            module = importlib.import_module(f"custom_components.decky_home_assistant.{platform}")
+            module = importlib.import_module(f"custom_components.piston.{platform}")
             self.assertTrue(hasattr(module, "PARALLEL_UPDATES"), platform)
 
     def test_read_only_platforms_are_unlimited_and_the_media_player_must_not_serialize_launches(self):
         for platform in const.PLATFORMS:
-            module = importlib.import_module(f"custom_components.decky_home_assistant.{platform}")
+            module = importlib.import_module(f"custom_components.piston.{platform}")
             if platform in READ_ONLY or platform == "media_player":
                 self.assertEqual(module.PARALLEL_UPDATES, 0, platform)   # media player: the device keeps last-command-wins
             else:
@@ -67,7 +67,7 @@ class ActionExceptionTests(unittest.IsolatedAsyncioTestCase):
         coord = make_coordinator()
         connect(coord)
         coord.client.error = CommandError(m.BAD_REQUEST, "message is required")
-        from custom_components.decky_home_assistant.notify import DeckyNotify
+        from custom_components.piston.notify import DeckyNotify
         with self.assertRaises(ServiceValidationError):
             await DeckyNotify(coord).async_show_toast(message=" ")
         coord.client.error = CommandError(m.INTERNAL, "boom")

@@ -1,7 +1,7 @@
 import hashlib
 import unittest
 
-from decky_ha.proto import pake
+from piston_device.proto import pake
 
 
 def run(code_dev="123456", code_user="123456", a=None, b=None, salt=b"S" * 16):

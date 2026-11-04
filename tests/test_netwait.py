@@ -1,6 +1,6 @@
 import unittest
 
-from decky_ha.netwait import wait_for_network
+from piston_device.netwait import wait_for_network
 
 
 class Clock:

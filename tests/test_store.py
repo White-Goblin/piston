@@ -4,10 +4,10 @@ from datetime import datetime, timedelta, timezone
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 
-from custom_components.decky_home_assistant import store as store_module
-from custom_components.decky_home_assistant.store import DeckyStore, stable_subset
+from custom_components.piston import store as store_module
+from custom_components.piston.store import DeckyStore, stable_subset
 
-KEY = "decky_home_assistant.e1"
+KEY = "piston.e1"
 T0 = datetime(2026, 11, 3, 8, 0, tzinfo=timezone.utc)
 
 LIVE = {

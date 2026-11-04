@@ -55,11 +55,11 @@ const BrowserView = ({ url, bounds }: { url: string; bounds: Bounds }) => {
   const [view] = useState<any>(() => {
     try {
       const root: any = (Router as any).WindowStore?.GamepadUIMainWindowInstance;
-      const created = root.CreateBrowserView("decky-home-assistant-pip");
+      const created = root.CreateBrowserView("piston-pip");
       setPipState({ error: "" });
       return created;
     } catch (e) {
-      console.error("Decky Home Assistant: CreateBrowserView failed", e);
+      console.error("Piston: CreateBrowserView failed", e);
       setPipState({ error: `Browser view unavailable: ${e}`, visible: false });
       return null;
     }

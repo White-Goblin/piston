@@ -1,8 +1,8 @@
 import asyncio
 import unittest
 
-from decky_ha import lifecycle
-from decky_ha.lifecycle import Lifecycle
+from piston_device import lifecycle
+from piston_device.lifecycle import Lifecycle
 
 
 class FakeStdin:

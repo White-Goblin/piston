@@ -10,25 +10,25 @@ sys.path.insert(0, _here)
 
 import decky
 
-from decky_ha.advertise import Advertiser
-from decky_ha.audio import AudioMixin
-from decky_ha.control import ControlMixin
-from decky_ha.controllers import ControllersMixin
-from decky_ha.http_server import HttpServerMixin
-from decky_ha.media import MediaMixin
-from decky_ha.media_keys import MediaKeyMixin
-from decky_ha.pairing import PairingMixin
-from decky_ha.pip import PipMixin
-from decky_ha.pip_signal import PipSignalMixin
-from decky_ha.resume import ResumeMixin
-from decky_ha.sensors import SensorsMixin
-from decky_ha.proto import LANE_VERSION, messages as proto_messages
-from decky_ha.server import DEFAULT_PORT, ProtocolServer
-from decky_ha.settings import SettingsMixin
-from decky_ha.state import StateMixin
-from decky_ha.update import UpdateMixin
-from decky_ha.version import plugin_version
-from decky_ha.wol import WolMixin
+from piston_device.advertise import Advertiser
+from piston_device.audio import AudioMixin
+from piston_device.control import ControlMixin
+from piston_device.controllers import ControllersMixin
+from piston_device.http_server import HttpServerMixin
+from piston_device.media import MediaMixin
+from piston_device.media_keys import MediaKeyMixin
+from piston_device.pairing import PairingMixin
+from piston_device.pip import PipMixin
+from piston_device.pip_signal import PipSignalMixin
+from piston_device.resume import ResumeMixin
+from piston_device.sensors import SensorsMixin
+from piston_device.proto import LANE_VERSION, messages as proto_messages
+from piston_device.server import DEFAULT_PORT, ProtocolServer
+from piston_device.settings import SettingsMixin
+from piston_device.state import StateMixin
+from piston_device.update import UpdateMixin
+from piston_device.version import plugin_version
+from piston_device.wol import WolMixin
 
 
 class Plugin(
@@ -126,7 +126,7 @@ class Plugin(
         self._init_pairing()
         self._init_pip_signal()
         self._init_update()
-        decky.logger.info("Decky Home Assistant starting")
+        decky.logger.info("Piston starting")
 
         self.server = ProtocolServer(
             device_id=lambda: self._load_settings()["device_id"],
@@ -164,7 +164,7 @@ class Plugin(
         await self._start_lifecycle()
 
     async def _unload(self):
-        decky.logger.info("Decky Home Assistant unloading")
+        decky.logger.info("Piston unloading")
         # Decky may unload a plugin that is still starting (an install right after a start): only stop what exists
         for name in ("sensor_task", "audio_task", "device_task", "session_task", "resume_task", "playback_task",
                      "update_task", "update_confirm_task", "update_approval_task"):
@@ -186,4 +186,4 @@ class Plugin(
             http_server.close()
 
     async def _uninstall(self):
-        decky.logger.info("Decky Home Assistant uninstalled")
+        decky.logger.info("Piston uninstalled")

@@ -34,7 +34,7 @@ class VirtualKeyboard:
         fcntl.ioctl(self._fd, UI_SET_EVBIT, EV_KEY)
         for code in KEY_CODES.values():
             fcntl.ioctl(self._fd, UI_SET_KEYBIT, code)
-        os.write(self._fd, struct.pack("80sHHHHi" + "i" * 256, b"decky-home-assistant", 3, 1, 1, 1, 0, *([0] * 256)))
+        os.write(self._fd, struct.pack("80sHHHHi" + "i" * 256, b"piston", 3, 1, 1, 1, 0, *([0] * 256)))
         fcntl.ioctl(self._fd, UI_DEV_CREATE)
         time.sleep(0.5)  # let the system notice the new device before the first key
 

@@ -7,12 +7,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.issue_registry import IssueRegistry
 
-import custom_components.decky_home_assistant as integration
-from custom_components.decky_home_assistant import client as c, config_flow as cf
-from custom_components.decky_home_assistant.binary_sensor import ConnectivitySensor
-from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
-from decky_ha.pairing import PairingManager
-from decky_ha.server import ProtocolServer
+import custom_components.piston as integration
+from custom_components.piston import client as c, config_flow as cf
+from custom_components.piston.binary_sensor import ConnectivitySensor
+from custom_components.piston.coordinator import DeckyCoordinator
+from piston_device.pairing import PairingManager
+from piston_device.server import ProtocolServer
 from .stdlib_transport import StdTransport
 
 SECRET = b"s" * 32
@@ -47,7 +47,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
 
     # --- power model: shutdown announcement, silent loss, logging, last_connected ----------
 
-    LOGGER = "custom_components.decky_home_assistant.coordinator"
+    LOGGER = "custom_components.piston.coordinator"
 
     async def test_a_shutdown_announcement_is_off_at_once_without_waiting_for_the_timeout(self):
         self.coord.on_connection(True)
@@ -139,7 +139,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((self.coord.power, self.coord.sleeping), ("on", False))
 
     async def test_entities_and_connectivity_go_unavailable_while_the_device_sleeps(self):
-        from custom_components.decky_home_assistant.button import DeckyPowerButton
+        from custom_components.piston.button import DeckyPowerButton
         self.coord.on_connection(True)
         sensor, button = ConnectivitySensor(self.coord), DeckyPowerButton(self.coord, "restart_steam", "restart_steam")
         self.assertEqual((sensor.is_on, button.available), (True, True))
@@ -209,7 +209,7 @@ class CoordinatorTests(unittest.IsolatedAsyncioTestCase):
     async def test_entity_device_info_and_listener_registration(self):
         sensor = ConnectivitySensor(self.coord)
         self.assertEqual(sensor.unique_id, "dev123abc456_connectivity")
-        self.assertEqual(sensor.device_info["identifiers"], {("decky_home_assistant", "dev123abc456")})
+        self.assertEqual(sensor.device_info["identifiers"], {("piston", "dev123abc456")})
         self.assertNotIn("connections", sensor.device_info)
         self.coord.on_state("device", {"mac": "aa:bb"})
         self.assertEqual(ConnectivitySensor(self.coord).device_info["connections"], {("mac", "aa:bb")})
@@ -271,7 +271,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.received, [{"seconds": 60}])
         self.assertEqual((coord.power, coord.connected), ("on", True))
         self.assertEqual(self.entry.data["mac"], "aa:bb:cc:dd:ee:ff")
-        from custom_components.decky_home_assistant.const import PLATFORMS
+        from custom_components.piston.const import PLATFORMS
         self.assertEqual(self.hass.config_entries.forwarded, [PLATFORMS])
         # a good connection clears any old version-skew repair issue
         self.assertEqual(sorted(IssueRegistry.deleted), ["version_skew_new_dev123abc456", "version_skew_old_dev123abc456"])
@@ -309,7 +309,7 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(Store.delays), delays)
         await coord.store._store.fire_delay()
         key, data = Store.writes[-1]
-        self.assertEqual(key, "decky_home_assistant.e1")
+        self.assertEqual(key, "piston.e1")
         self.assertEqual(data["groups"]["sensors"], {"keys": ["cpu_load"]})
         self.assertEqual(data["groups"]["device"]["mac"], "aa:bb:cc:dd:ee:ff")
 
@@ -330,9 +330,9 @@ class SetupTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(Store.writes), before + 1)
 
     async def test_removing_the_entry_deletes_its_stored_state(self):
-        Store.files["decky_home_assistant.e1"] = {"version": 1, "data": {"groups": {}}}
+        Store.files["piston.e1"] = {"version": 1, "data": {"groups": {}}}
         await integration.async_remove_entry(self.hass, self.entry)
-        self.assertNotIn("decky_home_assistant.e1", Store.files)
+        self.assertNotIn("piston.e1", Store.files)
 
     async def test_removing_the_entry_also_removes_the_unreachable_issue(self):
         await integration.async_remove_entry(self.hass, self.entry)

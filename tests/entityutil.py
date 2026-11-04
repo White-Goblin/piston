@@ -2,8 +2,8 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from custom_components.decky_home_assistant.client import CommandError, DeviceOffline
-from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
+from custom_components.piston.client import CommandError, DeviceOffline
+from custom_components.piston.coordinator import DeckyCoordinator
 
 
 class FakeClient:

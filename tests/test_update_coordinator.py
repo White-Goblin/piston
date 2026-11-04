@@ -3,9 +3,9 @@ import unittest
 
 from homeassistant.core import HomeAssistant
 
-from custom_components.decky_home_assistant import update_logic as ul
-from custom_components.decky_home_assistant.client import DeviceOffline
-from custom_components.decky_home_assistant.coordinator import DeckyCoordinator
+from custom_components.piston import update_logic as ul
+from custom_components.piston.client import DeviceOffline
+from custom_components.piston.coordinator import DeckyCoordinator
 
 from .test_coordinator import entry
 
