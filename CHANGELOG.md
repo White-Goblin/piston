@@ -2,7 +2,11 @@
 
 ## 0.4.1
 
-**Update the plugin on the device and the integration in Home Assistant together; from 0.4.0 on the plugin updates itself.** This release keeps protocol version 3 and changes nothing but the version number. It exists to check the plugin self-update on a real device: with 0.4.0 installed on both sides, updating the integration to 0.4.1 makes Home Assistant offer the plugin update, which you approve on the device.
+**Update the plugin on the device and the integration in Home Assistant together; from 0.4.0 on the plugin updates itself.** This release keeps protocol version 3. It is the first release checked with the plugin self-update on a real device: with 0.4.0 installed on both sides, updating the integration to 0.4.1 makes Home Assistant offer the plugin update, which you approve on the device.
+
+### Fixed
+- The plugin could not download its update from GitHub: Decky Loader's Python has no certificate bundle, so the download failed with a certificate error. The system's certificates are now loaded explicitly.
+- The plugin's Steam interface ignored an update offered for a version it had asked for before, and could mistake "no update pending" for a plugin that does not answer.
 
 ## 0.4.0
 
