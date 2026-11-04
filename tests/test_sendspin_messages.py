@@ -162,6 +162,44 @@ class ServerMessageTests(unittest.TestCase):
         self.bad("server/activate", {"activities": ["dancing"]})
         self.bad("server/activate", {"activities": "playback"})
 
+    def test_server_state_metadata_and_controller_from_the_capture(self):
+        meta = {"timestamp": 5, "title": "404", "artist": "Knife Party", "album_artist": "Knife Party", "album": "Abandon Ship",
+                "artwork_url": "http://host/x?size=512", "year": 2014, "track": 5,
+                "progress": {"track_progress": 39, "track_duration": 297000, "playback_speed": 1000}}
+        self.ok("server/state", {"metadata": meta})
+        self.ok("server/state", {"metadata": {"timestamp": 5}})
+        self.ok("server/state", {"metadata": {"timestamp": 5, "title": None, "progress": None, "extra": [1]}})
+        control = {"supported_commands": ["play", "pause", "next"], "volume": 20, "muted": False, "repeat": "off", "shuffle": False,
+                   "seek_max_ms": 1000}
+        self.ok("server/state", {"controller": control})
+        self.ok("server/state", {"other": 1})
+
+    def test_server_state_rejects_wrong_types_and_oversized_text(self):
+        for meta in ({"title": 5}, {"title": "é" * 600}, {"year": "2014"}, {"track": True}, {"progress": 3},
+                     {"progress": {"track_progress": -1}}, {"progress": {"track_duration": "x"}}, {"timestamp": 1.5}, "x"):
+            self.bad("server/state", {"metadata": meta})
+        for ctl in ({"volume": 101}, {"volume": "5"}, {"muted": 1}, {"supported_commands": "play"}, {"seek_max_ms": -3}, []):
+            self.bad("server/state", {"controller": ctl})
+
+    def test_unknown_controller_commands_are_tolerated_and_filtered(self):
+        _, payload = sm.parse_server_message(jf("server/state", {"controller": {"supported_commands": ["play", "teleport", 5, "next"]}}))
+        self.assertEqual(payload["controller"]["supported_commands"], ["play", "next"])
+
+    def test_client_command_accepts_only_the_four_card_commands(self):
+        for command in ("previous", "play", "pause", "next"):
+            frame = json.loads(sm.build_client_command(command)[1:])
+            self.assertEqual(frame, {"type": "client/command", "payload": {"controller": {"command": command}}})
+        for command in ("stop", "volume", "shuffle", "", None, 5):
+            with self.assertRaises(sm.SendspinProtocolError):
+                sm.build_client_command(command)
+
+    def test_the_artwork_channel_is_in_client_state_and_never_in_the_hello(self):
+        hello = json.loads(sm.build_client_hello("Box", 1000)[1:])["payload"]
+        self.assertNotIn("artwork@v1_support", hello)
+        self.assertNotIn("artwork", hello)
+        state = json.loads(sm.build_client_state(True, 20, False, 0)[1:])["payload"]
+        self.assertEqual(state["artwork"], {"channels": [{"source": "album", "format": "jpeg", "width": 512, "height": 512}]})
+
     def test_stream_start_accepts_only_our_formats(self):
         fmt = {"codec": "pcm", "sample_rate": 48000, "channels": 2, "bit_depth": 16}
         self.ok("stream/start", {"server_transmitted": 5, "player": fmt})
@@ -304,7 +342,7 @@ class BuilderTests(unittest.TestCase):
         hello = self.parsed(sm.build_client_hello("Box", 1_000_000, device_info={"product_name": "Piston"}))
         p = hello["payload"]
         self.assertEqual(hello["type"], "client/hello")
-        self.assertEqual((p["name"], p["supported_roles"], p["unpaired_access"]), ("Box", ["player@v1"], {"enabled": True}))
+        self.assertEqual((p["name"], p["supported_roles"], p["unpaired_access"]), ("Box", ["player@v1", "metadata@v1", "artwork@v1", "controller@v1"], {"enabled": True}))
         support = p["player@v1_support"]
         self.assertEqual(support["buffer_capacity"], 1_000_000)
         self.assertEqual([(f["codec"], f["channels"], f["sample_rate"], f["bit_depth"]) for f in support["supported_formats"]],

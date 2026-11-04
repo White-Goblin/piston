@@ -15,6 +15,8 @@ from . import clock as clk
 from . import codecs
 from . import messages as sm
 from . import noise
+from .artwork import ARTWORK_TYPE, ArtworkAssembler
+from .card import CardState, changed as card_changed
 from .crypto import x25519_public
 from .scheduler import Drop, Flush, Scheduler, Silence, Write
 from .sink import Sink, SinkError
@@ -29,6 +31,8 @@ MAX_FAILED_BURSTS = 3
 BUFFER_CAPACITY = 4_000_000
 REQUIRED_LEAD_TIME_MS = 250  # TODO(verify) with Music Assistant
 PLAYER_ROLE = "player@v1"
+METADATA_ROLE, ARTWORK_ROLE, CONTROLLER_ROLE = "metadata@v1", "artwork@v1", "controller@v1"
+CARD_PUSH_INTERVAL_S = 0.25  # the card goes to the UI at most four times a second
 POLL_INTERVAL_S = 0.01
 DECODE_FAILURE_LIMIT = 20  # decode failures within DECODE_FAILURE_WINDOW_S end the stream
 DECODE_FAILURE_WINDOW_S = 5.0
@@ -51,7 +55,8 @@ class SendspinSession:
                  output_delay_ms: int = 0, on_status: Callable | None = None, on_settings: Callable | None = None,
                  now_us: Callable[[], int] = monotonic_us, lookahead_us: int = 100_000, tolerance_us: int = 5_000,
                  burst_interval_s: float = BURST_INTERVAL_S, log: Callable[[str], None] = lambda m: None,
-                 admit: Callable | None = None, available=frozenset(), monotonic: Callable[[], float] = time.monotonic):
+                 admit: Callable | None = None, available=frozenset(), monotonic: Callable[[], float] = time.monotonic,
+                 on_card: Callable | None = None, wall_clock: Callable[[], float] = time.time):
         self._reader, self._writer = reader, writer
         self._private_key = private_key
         self._name = name
@@ -64,6 +69,14 @@ class SendspinSession:
         self._log = log
         self.available = frozenset(available)  # the codecs this device can decode ("flac", "opus"); pcm always
         self._monotonic = monotonic
+        self._wall = wall_clock
+        self._on_card = on_card or (lambda snapshot: None)
+        self.card = CardState()
+        self.card.set_volume(volume, muted)
+        self.artwork = ArtworkAssembler(lambda t: self.clock.compute_client_time(t) if self.clock.converged else None, now_us)
+        self._card_sent = None      # the last snapshot given to on_card
+        self._card_sent_at = None   # monotonic time of that
+        self._card_dirty = False
         self._decoder = None
         self._decode_failures = []  # monotonic times of recent decode failures
         self._seen_decode_errors = 0
@@ -97,6 +110,13 @@ class SendspinSession:
     @property
     def player_active(self) -> bool:
         return PLAYER_ROLE in self.active_roles
+
+    def _role_active(self, role: str) -> bool:
+        return role in self.active_roles
+
+    @property
+    def card_commands(self) -> list:
+        return self.card.commands() if self._role_active(CONTROLLER_ROLE) else []
 
     def request_stop(self, reason: str = "shutdown") -> None:
         """Ask the session to say goodbye and end (the task running `run()` finishes it)."""
@@ -198,14 +218,75 @@ class SendspinSession:
                 raise SessionEnded(f"rejected ({reason})")
         roles = payload.get("active_roles")
         if roles is not None:
-            self.active_roles = [r for r in roles if r == PLAYER_ROLE]
+            self.active_roles = [r for r in roles if r in sm.ROLES]
         had_player = self.player_active
+        self.card.set_session(True)
+        if roles is not None:
+            self._drop_inactive_card_parts()
         if not self.player_active and self.streaming:
             await self._end_stream()
         if self.player_active and not had_player:
             await self._send_state()
         if not self.streaming:
             self._on_status("connected", server_name=self.server_name)
+
+    def _drop_inactive_card_parts(self) -> None:
+        """Roles the server stopped (or never) activated leave nothing of theirs on the card; the player is unaffected."""
+        if not self._role_active(METADATA_ROLE):
+            self.card.apply_metadata({})
+        if not self._role_active(CONTROLLER_ROLE):
+            self.card.apply_controller({})
+        if not self._role_active(ARTWORK_ROLE):
+            self.artwork.reset()
+            self.card.set_cover(None)
+        self._push_card()
+
+    # --- the card (metadata, cover, controller) ---------------------------------------------------------------------------------
+
+    def _card_snapshot(self) -> dict:
+        server_now = self.clock.compute_server_time(self._now()) if self.clock.converged else None
+        return self.card.snapshot(server_now, self._wall())
+
+    def _push_card(self, force: bool = False) -> None:
+        """Hand the card to `on_card` if it changed; at most four times a second (a later change is flushed by the playout loop)."""
+        self._card_dirty = True
+        self._flush_card(force)
+
+    def _flush_card(self, force: bool = False) -> None:
+        if not self._card_dirty:
+            return
+        now = self._monotonic()
+        if not force and self._card_sent_at is not None and now - self._card_sent_at < CARD_PUSH_INTERVAL_S:
+            return
+        snapshot = self._card_snapshot()
+        self._card_dirty = False
+        if not force and not card_changed(self._card_sent, snapshot):
+            return
+        self._card_sent, self._card_sent_at = snapshot, now
+        self._on_card(snapshot)
+
+    async def send_command(self, name: str) -> bool:
+        """Send a controller command (previous, play, pause, next) if the server offers it. False when it is not sent."""
+        if name not in self.card_commands or self._transport is None:
+            return False
+        try:
+            await self._send(sm.build_client_command(name))
+        except (OSError, wsproto.WsClosed, sm.SendspinProtocolError):
+            return False
+        return True
+
+    async def set_player_volume(self, volume: int) -> None:
+        """This device's own player volume (the card's slider): the same path as a server volume command."""
+        await self._set_volume(max(0, min(100, int(volume))))
+        if self.player_active:
+            await self._send_state()
+
+    async def _set_volume(self, volume: int) -> None:
+        self.volume = volume
+        await self.sink.set_volume(volume)
+        self.card.set_volume(self.volume, self.muted)
+        self._on_settings(volume=volume)
+        self._push_card()
 
     async def _steady(self) -> None:
         await self.sink.set_volume(self.volume)
@@ -259,7 +340,18 @@ class SendspinSession:
                 await self._player_command(value["player"])
         elif message_type == "server/activate":
             await self._apply_activate(value)
-        # group/update, server/state and anything else do not concern a player without metadata
+        elif message_type == "server/state":
+            if "metadata" in value and self._role_active(METADATA_ROLE):
+                self.card.apply_metadata(value["metadata"])
+            if "controller" in value and self._role_active(CONTROLLER_ROLE):
+                self.card.apply_controller(value["controller"])
+            self._push_card()
+        elif message_type == "binary":
+            kind, data = value
+            if kind == ARTWORK_TYPE and self._role_active(ARTWORK_ROLE):  # channel 0 only
+                if "changed" in self.artwork.feed(bytes([kind]) + data):
+                    self._cover_changed()
+        # group/update and anything else are not needed
 
     def _build_decoder(self, fmt: dict):
         """(decoder or None, sample size in bits for the sink) for a validated stream/start format."""
@@ -317,6 +409,11 @@ class SendspinSession:
         if self.player_active:
             await self._send_state()
 
+    def _cover_changed(self) -> None:
+        cover = self.artwork.current()
+        self.card.set_cover(cover.id if cover else None)
+        self._push_card()
+
     async def _player_command(self, command: dict) -> None:
         name = command["command"]
         changes = {}
@@ -333,6 +430,8 @@ class SendspinSession:
             self.scheduler.output_delay_us = self.output_delay_ms * 1000
             changes["output_delay_ms"] = self.output_delay_ms
         self._on_settings(**changes)
+        self.card.set_volume(self.volume, self.muted)
+        self._push_card()
         await self._send_state()
 
     async def _send_state(self) -> None:
@@ -409,6 +508,9 @@ class SendspinSession:
 
     async def _playout_loop(self) -> None:
         while True:
+            if self.artwork.waiting() and self.artwork.poll():
+                self._cover_changed()
+            self._flush_card()
             if self.streaming:
                 try:
                     await self._apply_actions(self.scheduler.poll())
@@ -443,6 +545,11 @@ class SendspinSession:
         self.streaming = False
         self.scheduler.clear()
         self._close_decoder()
+        self.artwork.reset()
+        self.card.clear()
+        if self._card_sent is None or self._card_sent["active"]:
+            self._card_dirty = True
+            self._flush_card(force=True)  # the final {active: false}
         try:
             await self.sink.close()
         except Exception:  # noqa: BLE001

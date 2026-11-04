@@ -409,3 +409,99 @@ class SleepTests(PluginCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CardTests(PluginCase):
+    ROLES = ("player@v1", "metadata@v1", "artwork@v1", "controller@v1")
+    JPEG = b"\xff\xd8\xff\xe0" + bytes(range(256)) * 300
+
+    async def connect_server(self):
+        peer = FakeServer()
+        await peer.connect(self.plugin.sendspin_listener.port)
+        await peer.handshake()
+        await peer.hello_and_activate(roles=self.ROLES)
+        peer.start_pump()
+        self.addCleanup(peer.close)
+        await self.until(lambda: self.group()["status"] == "connected")
+        await self.until(lambda: self.plugin._sendspin_card_session().clock.converged)
+        return peer
+
+    def card_events(self):
+        return [args[0] for (event, args) in fake_decky.emitted if event == "sendspin_card"]
+
+    def request(self, path):
+        return self.plugin._handle_request("GET", path)
+
+    async def test_without_a_session_everything_answers_cleanly(self):
+        await self.boot()
+        self.assertEqual(await self.plugin.get_sendspin_card(), {"active": False})
+        self.assertEqual(await self.plugin.sendspin_card_command("play"), {"error": "not connected"})
+        self.assertEqual(await self.plugin.sendspin_card_volume(30), {"error": "not connected"})
+        config = await self.plugin.get_sendspin_card_config()
+        self.assertEqual(set(config), {"port", "nonce"})
+        self.assertEqual(config["nonce"], self.plugin.nonce)
+        response = await self.request(f"/sendspin/cover?nonce={self.plugin.nonce}&id=x")
+        self.assertTrue(response.startswith(b"HTTP/1.1 404"))
+
+    async def test_the_event_follows_the_card_and_get_matches_the_last_one(self):
+        await self.boot()
+        peer = await self.connect_server()
+        now = peer.server_now()
+        await peer.send("server/state", {"controller": {"supported_commands": ["play", "pause", "next"]},
+                                         "metadata": {"timestamp": now, "title": "404", "artist": "Knife Party",
+                                                      "progress": {"track_progress": 0, "track_duration": 100000, "playback_speed": 1000}}})
+        await self.until(lambda: self.card_events() and self.card_events()[-1]["active"])
+        last = self.card_events()[-1]
+        self.assertEqual((last["title"], last["commands"]), ("404", ["play", "pause", "next"]))
+        current = await self.plugin.get_sendspin_card()
+        self.assertEqual({k: v for k, v in current.items() if k not in ("position_ms", "updated_at")},
+                         {k: v for k, v in last.items() if k not in ("position_ms", "updated_at")})
+
+    async def test_the_cover_route_needs_the_nonce_and_the_current_id(self):
+        await self.boot()
+        peer = await self.connect_server()
+        await peer.send("server/state", {"metadata": {"timestamp": peer.server_now(), "title": "x"}})
+        await peer.send_cover(self.JPEG)
+        await self.until(lambda: self.card_events() and self.card_events()[-1]["art"])
+        art = self.card_events()[-1]["art"]
+        nonce = self.plugin.nonce
+        ok = await self.request(f"/sendspin/cover?nonce={nonce}&id={art}")
+        head, _, body = ok.partition(b"\r\n\r\n")
+        self.assertTrue(head.startswith(b"HTTP/1.1 200"))
+        self.assertIn(b"Content-Type: image/jpeg", head)
+        self.assertIn(b"Cache-Control: no-store", head)
+        self.assertEqual(body, self.JPEG)
+        self.assertTrue((await self.request(f"/sendspin/cover?nonce=wrong&id={art}")).startswith(b"HTTP/1.1 403"))
+        self.assertTrue((await self.request(f"/sendspin/cover?id={art}")).startswith(b"HTTP/1.1 403"))
+        self.assertTrue((await self.request(f"/sendspin/cover?nonce={nonce}&id=old")).startswith(b"HTTP/1.1 404"))
+        self.assertTrue((await self.plugin._handle_request("POST", f"/sendspin/cover?nonce={nonce}&id={art}")).startswith(b"HTTP/1.1 405"))
+        await peer.send_cover(self.JPEG[:900])
+        await self.until(lambda: self.card_events()[-1]["art"] != art)
+        self.assertTrue((await self.request(f"/sendspin/cover?nonce={nonce}&id={art}")).startswith(b"HTTP/1.1 404"))  # the old id is gone
+
+    async def test_the_command_and_volume_callables_reach_the_session(self):
+        await self.boot()
+        peer = await self.connect_server()
+        await peer.send("server/state", {"metadata": {"timestamp": peer.server_now(), "title": "x"},
+                                         "controller": {"supported_commands": ["pause", "next"]}})
+        await self.until(lambda: self.plugin._sendspin_card_session().card_commands == ["pause", "next"])
+        self.assertEqual(await self.plugin.sendspin_card_command("pause"), {"ok": True})
+        self.assertEqual((await peer.next("client/command"))[1], {"controller": {"command": "pause"}})
+        self.assertEqual(await self.plugin.sendspin_card_command("previous"), {"error": "not offered"})
+        self.assertEqual(await self.plugin.sendspin_card_command("stop"), {"error": "unknown command"})
+        self.assertEqual(await self.plugin.sendspin_card_command(5), {"error": "unknown command"})
+        self.assertEqual(await self.plugin.sendspin_card_volume(35), {"ok": True})
+        state = None
+        while state is None or state["player"]["volume"] != 35:
+            _, state = await peer.next("client/state")
+        for bad in (-1, 101, "5", None, True):
+            self.assertEqual(await self.plugin.sendspin_card_volume(bad), {"error": "volume must be 0-100"})
+
+    async def test_the_final_inactive_card_is_emitted_when_the_server_leaves(self):
+        await self.boot()
+        peer = await self.connect_server()
+        await peer.send("server/state", {"metadata": {"timestamp": peer.server_now(), "title": "x"}})
+        await self.until(lambda: self.card_events() and self.card_events()[-1]["active"])
+        peer.close()
+        await self.until(lambda: not self.card_events()[-1]["active"])
+        self.assertEqual(await self.plugin.get_sendspin_card(), {"active": False})

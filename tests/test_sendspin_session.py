@@ -72,7 +72,7 @@ class HandshakeAndHelloTests(SessionTestCase):
         await h.connect()
         hello = h.peer.hello
         self.assertEqual(hello["name"], "Test Box")
-        self.assertEqual(hello["supported_roles"], ["player@v1"])
+        self.assertEqual(hello["supported_roles"], ["player@v1", "metadata@v1", "artwork@v1", "controller@v1"])
         self.assertEqual(hello["unpaired_access"], {"enabled": True})
         self.assertEqual([f["sample_rate"] for f in hello["player@v1_support"]["supported_formats"]], [48000, 44100])
         s = h.sessions[0]

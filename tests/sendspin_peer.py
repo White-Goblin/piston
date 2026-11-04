@@ -2,6 +2,7 @@
 same code the player's tests use, answers time requests and lets the test send messages and audio."""
 import asyncio
 import json
+import struct
 
 from piston_device.sendspin import crypto, messages as sm, noise
 from piston_device.sendspin.session import monotonic_us
@@ -50,6 +51,16 @@ class FakeServer:
 
     async def send(self, message_type: str, payload: dict) -> None:
         await self.ws.send_binary(self.transport.send(sm.json_frame(message_type, payload)))
+
+    async def send_plain(self, plaintext: bytes) -> None:
+        """Any whole plaintext message (artwork binary types)."""
+        await self.ws.send_binary(self.transport.send(plaintext))
+
+    async def send_cover(self, image: bytes, timestamp_us: int = 0, part_size: int = 65517) -> None:
+        """The spec's artwork framing: announce, then parts."""
+        await self.send_plain(bytes([8, 2]) + struct.pack(">qI", timestamp_us, len(image)))
+        for i in range(0, len(image), part_size):
+            await self.send_plain(bytes([8, 0]) + image[i:i + part_size])
 
     async def send_audio(self, timestamp_us: int, pcm: bytes) -> None:
         await self.ws.send_binary(self.transport.send(sm.build_audio_chunk(timestamp_us, pcm)))

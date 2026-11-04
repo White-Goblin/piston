@@ -43,7 +43,21 @@ class HttpServerMixin:
                 return self._http_response("404 Not Found", text, b"not found")
         if url.path in ("/pip/events", "/pip/send"):
             return await self._handle_pip_request(method, url, body)
+        if url.path == "/sendspin/cover":
+            return self._handle_cover_request(method, url)
         return self._http_response("404 Not Found", text, b"not found")
+
+    def _handle_cover_request(self, method: str, url) -> bytes:
+        """The current Sendspin cover for the media card; protected by the per-run nonce, and only the current id is served."""
+        query = parse_qs(url.query)
+        if not secrets.compare_digest(query.get("nonce", [""])[0], self.nonce):
+            return self._http_response("403 Forbidden", "text/plain", b"bad nonce")
+        if method != "GET":
+            return self._http_response("405 Method Not Allowed", "text/plain", b"")
+        cover = self._sendspin_cover(query.get("id", [""])[0])
+        if cover is None:
+            return self._http_response("404 Not Found", "text/plain", b"not found")
+        return self._http_response("200 OK", cover.content_type, cover.data)
 
     async def _handle_pip_request(self, method: str, url, body: bytes) -> bytes:
         """Signalling endpoints for the player page; protected by the per-run nonce."""

@@ -18,6 +18,14 @@ AUDIO_HEADER = 13
 SEND_AHEAD_UNKNOWN = (0, 4294967295)
 PLAYER_COMMANDS = ("volume", "mute", "set_output_delay")
 ACTIVITIES = ("playback", "pairing")
+ROLES = ("player@v1", "metadata@v1", "artwork@v1", "controller@v1")
+# controller commands the server may list; the card only ever sends CARD_COMMANDS
+CONTROLLER_COMMANDS = ("play", "pause", "stop", "next", "previous", "volume", "mute", "repeat_off", "repeat_one", "repeat_all",
+                       "shuffle", "unshuffle", "switch", "seek", "seek_relative")
+CARD_COMMANDS = ("previous", "play", "pause", "next")
+MAX_METADATA_TEXT = 1024
+MAX_METADATA_MS = 10 * 24 * 3600 * 1000  # a ten day track is no track
+ARTWORK_CHANNEL = {"source": "album", "format": "jpeg", "width": 512, "height": 512}
 GOODBYE_REASONS = ("another_server", "shutdown", "restart", "user_request", "unauthorized", "pairing_required",
                    "concurrent_attempt", "unpaired")
 # What this player accepts: raw 16-bit stereo (D6)
@@ -327,7 +335,50 @@ def _check_command(p: dict) -> None:
         _require(_is_int(player.get("output_delay_ms")) and 0 <= player["output_delay_ms"] <= 5000, "output_delay_ms must be 0-5000")
 
 
+def _optional_text(obj: dict, key: str) -> None:
+    value = obj.get(key)
+    _require(value is None or (isinstance(value, str) and len(value.encode("utf-8")) <= MAX_METADATA_TEXT), f"metadata {key} invalid")
+
+
+def _optional_int(obj: dict, key: str, low: int, high: int, what: str) -> None:
+    value = obj.get(key)
+    _require(value is None or (_is_int(value) and low <= value <= high), f"{what} {key} invalid")
+
+
+def _check_metadata(m) -> None:
+    _require(isinstance(m, dict), "metadata must be an object")
+    _optional_int(m, "timestamp", 0, 2**62, "metadata")
+    for key in ("title", "artist", "album", "album_artist", "artwork_url"):
+        _optional_text(m, key)
+    _optional_int(m, "year", 0, 9999, "metadata")
+    _optional_int(m, "track", 0, 100000, "metadata")
+    progress = m.get("progress")
+    if progress is not None:
+        _require(isinstance(progress, dict), "metadata progress must be an object")
+        _optional_int(progress, "track_progress", 0, MAX_METADATA_MS, "progress")
+        _optional_int(progress, "track_duration", 0, MAX_METADATA_MS, "progress")
+        _optional_int(progress, "playback_speed", 0, 100000, "progress")
+
+
+def _check_controller(c) -> None:
+    _require(isinstance(c, dict), "controller must be an object")
+    commands = c.get("supported_commands", [])
+    _require(isinstance(commands, list) and len(commands) <= 64, "supported_commands invalid")
+    c["supported_commands"] = [x for x in commands if x in CONTROLLER_COMMANDS]  # unknown commands are tolerated and dropped
+    _optional_int(c, "volume", 0, 100, "controller")
+    _require(c.get("muted") is None or isinstance(c["muted"], bool), "controller muted invalid")
+    _optional_int(c, "seek_max_ms", 0, MAX_METADATA_MS, "controller")
+
+
+def _check_server_state(p: dict) -> None:
+    if "metadata" in p:
+        _check_metadata(p["metadata"])
+    if "controller" in p:
+        _check_controller(p["controller"])
+
+
 _SERVER_CHECKS = {
+    "server/state": _check_server_state,
     "server/hello": _check_hello,
     "server/activate": _check_activate,
     "server/command": _check_command,
@@ -347,7 +398,7 @@ def pcm_formats() -> list:
 
 def build_client_hello(name: str, buffer_capacity: int, unpaired_access: bool = True, device_info: dict | None = None,
                        available=frozenset()) -> bytes:
-    """Plaintext of the encrypted `client/hello`: the player role only (D14); `available` names the codecs that can be decoded
+    """Plaintext of the encrypted `client/hello`: the player, metadata, artwork and controller roles (the artwork channel goes in client/state, never here); `available` names the codecs that can be decoded
     ("flac", "opus"), PCM is always offered."""
     _text(name, "name")
     _require(_is_int(buffer_capacity) and buffer_capacity > 0, "buffer_capacity must be positive")
@@ -356,7 +407,7 @@ def build_client_hello(name: str, buffer_capacity: int, unpaired_access: bool = 
         _require(all(isinstance(v, str) and len(v.encode()) <= MAX_NAME_BYTES for v in device_info.values()), "device_info values too long")
         payload["device_info"] = dict(device_info)
     payload.update({
-        "supported_roles": ["player@v1"],
+        "supported_roles": list(ROLES),
         "player@v1_support": {"supported_formats": offered_formats(available), "buffer_capacity": buffer_capacity},
         "supported_pair_methods": {"pairing_psk": {}},
         "unpaired_access": {"enabled": bool(unpaired_access)},
@@ -374,7 +425,13 @@ def build_client_state(available: bool, volume: int, muted: bool, output_delay_m
     if fmt is not None:
         checked = validate_stream_format(fmt)
         player["format"] = {k: checked[k] for k in ("codec", "sample_rate", "channels", "bit_depth")}
-    return json_frame("client/state", {"available": bool(available), "player": player})
+    return json_frame("client/state", {"available": bool(available), "player": player, "artwork": {"channels": [dict(ARTWORK_CHANNEL)]}})
+
+
+def build_client_command(command: str) -> bytes:
+    """`client/command` for the controller role; only the four card commands exist."""
+    _require(command in CARD_COMMANDS, "unknown controller command")
+    return json_frame("client/command", {"controller": {"command": command}})
 
 
 def build_client_time(client_transmitted_us: int) -> bytes:
