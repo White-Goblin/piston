@@ -5,3 +5,9 @@
 3. `python3 scripts/package_plugin.py` writes `out/decky-home-assistant-<version>.zip` (one folder named `Decky Home Assistant`, the layout Decky Loader installs) and `out/SHA256SUMS` (`sha256sum` format), which the integration uses to check the zip before the device installs it.
 4. Tag `v<version>` and create a GitHub release with the zip and `SHA256SUMS` attached (the tag workflow does this). HACS installs the integration from the tag; the plugin zip is installed on the device through Decky Loader.
 5. Check that the HACS and Hassfest workflows are green on the tagged commit.
+
+## Plugin self-update and releases
+
+- Home Assistant updates the plugin to the **manifest version of the integration**, using the release asset `decky-home-assistant-<version>.zip` and the `SHA256SUMS` of the tag `v<version>`. A release must therefore be published (not a draft or pre-release) with both files for the integration version to be updatable.
+- `FIRST_LANE_VERSION` in `custom_components/decky_home_assistant/const.py` is the first plugin release that can be updated this way (0.4.0). Nothing older is ever targeted.
+- The device `hello`, the `challenge`/`proof` exchange, the close codes and the `update` / `update_status` frames are frozen (see [protocol.md](protocol.md#updating-the-plugin)). A test pins them. Changing them means that plugin has to be installed by hand once more.

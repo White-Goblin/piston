@@ -66,6 +66,22 @@ class DocsMatchTheCode(unittest.TestCase):
         from decky_ha.proto import PROTOCOL_VERSION
         self.assertIn(f"protocol version {PROTOCOL_VERSION}", section)
 
+    def test_the_protocol_doc_describes_the_update_lane_and_the_first_lane_version_is_not_in_the_future(self):
+        from custom_components.decky_home_assistant.const import FIRST_LANE_VERSION
+        from custom_components.decky_home_assistant.update_logic import version_key
+        from decky_ha.proto import messages as m
+        doc = read("docs", "protocol.md")
+        for term in ("plugin_version", "lane", "`update ", "`update_status ", "SHA256SUMS", "waiting_for_confirmation", "not_confirmed",
+                     "approves it", "frozen") + tuple(m.UPDATE_STATES) + tuple(m.UPDATE_REASONS):
+            self.assertIn(term, doc, term)
+        manifest = json.loads(read("custom_components", "decky_home_assistant", "manifest.json"))
+        self.assertLessEqual(version_key(FIRST_LANE_VERSION), version_key(manifest["version"]))
+
+    def test_the_readme_explains_the_plugin_update_and_the_approval(self):
+        readme = read("README.md")
+        for term in ("Plugin update", "Install plugin updates automatically", "approve", "game mode", "not approved", "SHA256SUMS"):
+            self.assertIn(term, readme, term)
+
     def test_markdown_links_to_local_files_resolve(self):
         import re
         for doc in ("README.md", "docs/protocol.md", "docs/development.md", "docs/releasing.md", "CHANGELOG.md"):

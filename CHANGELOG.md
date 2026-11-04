@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.0
+
+**Update the plugin on the device and the integration in Home Assistant together, by hand, this one last time.** This release keeps protocol version 3 and adds the first plugin that Home Assistant can update by itself; releases before it cannot be, so install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant. From the next release on the plugin follows the integration.
+
+### The plugin updates itself
+- A **Plugin update** entity shows the plugin version on the device against the integration's version, with an Install button, and an **Install plugin updates automatically** switch (on by default).
+- After you update the integration, Home Assistant tells the device to install the matching plugin release. The device downloads it from GitHub, checks it against the `SHA256SUMS` published with the release and hands it to Decky Loader, which asks you to approve the install on the device (Home Assistant says so on the entity and in Repairs). Nothing is installed without your approval.
+- It works across protocol changes: the handshake is now stable, so a device and an integration on different protocol versions can still reach each other to update the plugin (everything else is still refused until the versions match).
+- A failed update keeps the old plugin, shows a Repairs item and is not retried until you press Install; a dialog that is not approved within 30 minutes counts as not approved. A new plugin that installs but does not start is replaced by the previous version again.
+- The release now includes `SHA256SUMS` next to the plugin zip.
+
+### Changed
+- The plugin reports its version in its `hello` (`plugin_version`, `lane`); diagnostics show the versions and the last update failure.
+
+### Fixed
+- The plugin failed to unload when Decky Loader unloaded it while it was still starting.
+
 ## 0.3.0
 
 **Update the plugin on the device and the integration in Home Assistant together.** This release uses protocol version 3 and neither side talks to version 2: a mismatch shows a Repairs item in Home Assistant that names the side to update, and the entities are unavailable until both match. Install the integration through HACS and the plugin zip through Decky Loader, then restart Home Assistant.
