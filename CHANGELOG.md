@@ -2,7 +2,7 @@
 
 ## 0.5.0
 
-**The project is now called Piston, and this is a clean break: it does not upgrade an install of 0.4.x.** Remove the old integration and plugin, install the new ones together (the integration and the plugin must be installed together) and pair again. The protocol version is unchanged (3).
+**The project is now called Piston, and this is a clean break: it does not upgrade an install of 0.4.x.** Remove the old integration and plugin, install the new ones together (the integration and the plugin must be installed together) and pair again. This release keeps protocol version 3.
 
 ### Changed
 - New name, logo and tagline ("Media and control for SteamOS devices in your living room").
