@@ -29,7 +29,7 @@ ORDER = ["bronze", "silver", "gold", "platinum"]
 ALL_RULES = {rule: tier for tier, rules in TIERS.items() for rule in rules}
 STATUSES = {"done", "todo", "exempt"}
 
-# README headings the documentation rules that are marked done rely on
+# README and docs/reference.md headings the documentation rules that are marked done rely on
 DOCS_SECTIONS = {
     "docs-installation-instructions": "## Install", "docs-removal-instructions": "## Uninstall",
     "docs-installation-parameters": "## Setup parameters", "docs-configuration-parameters": "## Options",
@@ -121,8 +121,10 @@ class QualityScaleFileTests(unittest.TestCase):
         self.assertRegex(self.header, r"Checked 20\d\d-\d\d-\d\d")
 
     def test_documentation_rules_marked_done_still_have_their_section_in_the_readme(self):
-        with open(os.path.join(ROOT, "README.md")) as f:
-            readme = f.read()
+        readme = ""
+        for name in ("README.md", os.path.join("docs", "reference.md")):
+            with open(os.path.join(ROOT, name)) as f:
+                readme += f.read()
         for rule, marker in DOCS_SECTIONS.items():
             if self.rules[rule]["status"] == "done":
                 self.assertIn(marker, readme, f"{rule} is done but README.md has no {marker!r}")

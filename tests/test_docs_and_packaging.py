@@ -13,6 +13,10 @@ import package_plugin  # noqa: E402
 INTEGRATION = os.path.join(ROOT, "custom_components", "piston")
 
 
+def readme_and_reference():
+    return read("README.md") + read("docs", "reference.md")
+
+
 def read(*parts):
     with open(os.path.join(ROOT, *parts), encoding="utf-8") as f:
         return f.read()
@@ -20,7 +24,7 @@ def read(*parts):
 
 class DocsMatchTheCode(unittest.TestCase):
     def test_readme_lists_every_entity_and_action(self):
-        readme = read("README.md")
+        readme = readme_and_reference()
         strings = json.loads(read("custom_components", "piston", "translations", "en.json"))
         for platform, entities in strings["entity"].items():
             for entity in entities.values():
@@ -29,13 +33,13 @@ class DocsMatchTheCode(unittest.TestCase):
             self.assertIn(f"piston.{service}", readme, f"action {service} is not in the README")
 
     def test_readme_lists_every_option(self):
-        readme = read("README.md")
+        readme = readme_and_reference()
         for label in json.loads(read("custom_components", "piston", "translations", "en.json"))["options"]["step"]["init"]["data"].values():
             self.assertIn(label, readme, f"option {label!r} is not in the README")
 
     def test_readme_names_the_port_and_service_type(self):
         from custom_components.piston.const import DEFAULT_PORT, SERVICE_TYPE
-        text = read("README.md") + read("docs", "protocol.md")
+        text = readme_and_reference() + read("docs", "protocol.md")
         self.assertIn(str(DEFAULT_PORT), text)
         self.assertIn(SERVICE_TYPE.rstrip("."), text)
 
@@ -53,7 +57,7 @@ class DocsMatchTheCode(unittest.TestCase):
             self.assertIn(term, doc, term)
 
     def test_the_readme_explains_what_the_media_player_shows(self):
-        readme = read("README.md")
+        readme = readme_and_reference()
         for term in ("standby", "off", "unavailable", "Turn on", "Repairs", "Download diagnostics", "Reconfigure"):
             self.assertIn(term, readme, term)
 
@@ -78,13 +82,13 @@ class DocsMatchTheCode(unittest.TestCase):
         self.assertLessEqual(version_key(FIRST_LANE_VERSION), version_key(manifest["version"]))
 
     def test_the_readme_explains_the_plugin_update_and_the_approval(self):
-        readme = read("README.md")
+        readme = readme_and_reference()
         for term in ("Plugin update", "Install plugin updates automatically", "approve", "game mode", "not approved", "SHA256SUMS"):
             self.assertIn(term, readme, term)
 
     def test_markdown_links_to_local_files_resolve(self):
         import re
-        for doc in ("README.md", "docs/protocol.md", "docs/development.md", "docs/releasing.md", "CHANGELOG.md"):
+        for doc in ("README.md", "docs/reference.md", "docs/protocol.md", "docs/development.md", "docs/releasing.md", "CHANGELOG.md"):
             base = os.path.dirname(os.path.join(ROOT, doc))
             for target in re.findall(r"\]\(([^)#\s]+)(?:#[^)]*)?\)", read(*doc.split("/"))):
                 if "://" in target or target.startswith("mailto:"):
