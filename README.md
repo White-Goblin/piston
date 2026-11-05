@@ -12,7 +12,9 @@ Requires Home Assistant 2026.10 or newer.
 
 ## Media apps
 
-Piston does not include any media apps. The user installs the apps they want on the SteamOS device, such as Jellyfin, YouTube or a web browser, and adds them as Steam games or non-Steam shortcuts. Apps added in the plugin panel become sources of the media player entity.
+Piston does not include any media apps. The user installs the apps they want on the SteamOS device, such as Jellyfin or YouTube, and adds them as Steam games or non-Steam shortcuts. Apps added in the plugin panel become sources of the media player entity.
+
+Streaming services without a native app, such as Netflix, Paramount+ and Disney+, are usually added as a web browser shortcut that opens directly on the service's website. Other tools and plugins automate this by creating non-Steam shortcuts that open a Chrome-based browser on a given site. One example is the Decky plugin [NonSteamLaunchers](https://github.com/moraroy/NonSteamLaunchers-On-Steam-Deck). Piston is not affiliated with it.
 
 Not every app works with the media player controls. Play, pause, next, previous and the now-playing information only work for apps that publish their playback to the system through MPRIS. Apps that do not publish it can still be launched and closed from Home Assistant, but their playback cannot be controlled. Compatibility has been tested with Jellyfin and YouTube (VacuumTube); other apps and most browsers may work if they publish MPRIS.
 
