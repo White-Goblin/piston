@@ -10,6 +10,12 @@ Requires Home Assistant 2026.10 or newer.
 
 > **Disclaimer:** this plugin was developed with AI assistance.
 
+## Media apps
+
+Piston does not include any media apps. The user installs the apps they want on the SteamOS device, such as Jellyfin, YouTube or a web browser, and adds them as Steam games or non-Steam shortcuts. Apps added in the plugin panel become sources of the media player entity.
+
+Not every app works with the media player controls. Play, pause, next, previous and the now-playing information only work for apps that publish their playback to the system through MPRIS. Apps that do not publish it can still be launched and closed from Home Assistant, but their playback cannot be controlled. Compatibility has been tested with Jellyfin and YouTube (VacuumTube); other apps and most browsers may work if they publish MPRIS.
+
 ## What you get
 
 | Entity | What it does |
