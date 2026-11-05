@@ -72,29 +72,30 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(applied, 0)
 
     def test_hardware_running_slow_is_followed_by_dropping_frames(self):
-        t, history, applied = self.run_sim(600, drift_ppm=100)               # 6 ms a minute
+        t, history, applied = self.run_sim(900, drift_ppm=1000)              # 60 ms a minute: a clock that is really off
         self.assertGreater(t.corrected_frames, 0)
-        self.assertGreater(applied / 1e6, 0.02)                              # it removed most of what drifted
-        late = [abs(e) for now, e in history if now > 120e6]
-        self.assertLess(max(late), 9_000)                                    # a gentle proportional loop settles near drift x window (6 ms)
+        self.assertGreater(applied / 1e6, 0.1)
+        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 75_000)   # a gentle loop settles near drift x window
 
     def test_hardware_running_fast_is_followed_by_inserting_frames(self):
-        t, history, _ = self.run_sim(600, drift_ppm=-100)
+        t, history, _ = self.run_sim(900, drift_ppm=-1000)
         self.assertLess(t.corrected_frames, 0)
-        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 9_000)
+        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 75_000)
 
-    def test_drift_with_noise_still_converges(self):
-        t, history, _ = self.run_sim(900, drift_ppm=150, noise_us=20_000)
-        self.assertGreater(t.corrected_frames, 0)
-        self.assertLess(max(abs(e) for now, e in history if now > 200e6), 12_000)
+    def test_noise_never_makes_it_drop_frames_and_inserts_stay_small(self):
+        """The +-25 ms sawtooth of the pipe fill with next to no drift (what the device showed): a loop that dropped frames on
+        this noise pulled the cushion in the pipe down from 83 ms to 33 ms. Only inserts may happen, and only a little."""
+        for drift in (0, 10, -10):
+            t, history, applied = self.run_sim(1200, drift_ppm=drift, noise_us=25_000)
+            self.assertLessEqual(t.corrected_frames, 0, msg=drift)      # never a net drop
+            self.assertLess(abs(applied), 40_000, msg=drift)
 
-    def test_the_drift_measured_on_the_device_leads_to_almost_no_correction(self):
-        """10 parts per million with the noise of the pipe fill (seen on the device): a first version chased the noise and dropped
-        16 ms in 15 seconds. Now the total correction over 15 minutes stays close to the real drift (9 ms)."""
-        t, history, applied = self.run_sim(900, drift_ppm=10, noise_us=25_000)
-        self.assertLess(abs(applied), 30_000)
-        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 12_000)
-        self.assertLess(abs(t.corrected_frames), 1500)
+    def test_a_draining_cushion_is_refilled(self):
+        """The device lost about 70 ms of cushion in 18 minutes (audio playing early by 65 ppm): inserts must hold it."""
+        t, history, applied = self.run_sim(1200, drift_ppm=-65, noise_us=25_000)
+        self.assertLess(t.corrected_frames, 0)
+        self.assertGreater(-applied, 0.04e6)                              # most of the 78 ms drained was put back
+        self.assertGreater(min(e for now, e in history if now > 100e6), -25_000)   # the error stays within a few tens of ms
 
     def test_corrections_are_small_and_rate_limited(self):
         t = DriftTracker(warmup_s=0, baseline_s=0.01)
@@ -102,9 +103,10 @@ class TrackerTests(unittest.TestCase):
         t.observe(20_000, 0)
         t.observe(40_000, 0)                                                 # baseline set at 0
         self.assertTrue(t.ready)
-        t._ema = 500_000                                                     # a huge error
+        t._ema = -500_000                                                    # a huge error (audio far too early)
         n = t.frames_to_correct(4608, RATE)
-        self.assertLessEqual(n, math.ceil(4608 * 0.001))                     # at most a tenth of a percent of the chunk
+        self.assertLessEqual(abs(n), math.ceil(4608 * 0.001))                # at most a tenth of a percent of the chunk
+        self.assertLess(n, 0)
 
     def test_a_restart_of_the_output_starts_the_measurement_over(self):
         t = DriftTracker(warmup_s=0, baseline_s=1)
@@ -130,7 +132,7 @@ class SchedulerIntegrationTests(unittest.TestCase):
         tracker = DriftTracker(warmup_s=0, baseline_s=0.01)
         s = Scheduler(lambda ts: ts - 1_000_000, lambda: t[0], rate=RATE, frame_bytes=FB, tracker=tracker)
         tracker.observe(0, 0), tracker.observe(20_000, 0), tracker.observe(40_000, 0)
-        tracker._ema = 20_000                                                # audio plays 20 ms late: drop some frames
+        tracker._ema = 60_000                                                # audio plays 60 ms late: drop some frames
         s.submit(1_000_000 + 10_100_000, frames(4800))                       # 100 ms chunk, due soon
         t[0] = 10_000_000
         actions = [a for a in s.poll() if isinstance(a, Write)]

@@ -9,27 +9,35 @@ difference with single frames dropped or inserted. We measure it from how full t
 `DriftTracker` is the estimator and the planner (pure logic). `error_us` is how much later than modelled the audio plays, as a
 slow average relative to the first seconds of the stream (a constant offset, such as the sink's own latency, does not matter,
 only its change). Corrections are small and slow: spread over a window of a minute, at most a tenth of a percent of the audio, and only
-once the error is a few milliseconds, so they are inaudible. (A first version planned them over two seconds and chased the
-noise of the measurement: on the device it dropped 16 ms in 15 seconds and nearly emptied the pipe. Measured drift of the
-hardware there is about 10 parts per million, so a gentle loop is all that is needed.)"""
+once the error is a few milliseconds, so they are inaudible. (Lessons from the device, 2026-11-04: the pipe fill moves in blocks of the stream's period, so the
+estimate wanders by about +-12 ms over minutes, and the cushion in the pipe really does drain over about twenty minutes (it
+fell from 83 ms to 12 ms, where the first version of this stream stuttered). A loop that dropped frames on noise made the
+cushion smaller still. So the loop is lopsided: inserting frames grows the cushion and is done readily, dropping frames only
+happens for a large lag.)
+"""
 import math
 
-DEADBAND_ENTER_US = 4_000    # start correcting at this much error
-DEADBAND_LEAVE_US = 1_500    # keep correcting until it is this small
+INSERT_ENTER_US = 8_000      # audio playing this much EARLIER than modelled (the pipe is draining): insert frames, which only
+INSERT_LEAVE_US = 3_000      # grows the cushion, so acting on a noisy reading costs nothing
+DROP_ENTER_US = 40_000       # audio playing this much LATER: drop frames, which shrinks the cushion, so only for a real lag
+DROP_LEAVE_US = 15_000
 WINDOW_S = 60.0              # a correction is planned over this long: gentle, because the measurement is noisy
 MAX_FRACTION = 0.001         # never alter more than this share of the audio (1 ms per second)
 TAU_S = 45.0                 # time constant of the average: the pipe fill is noisy (it moves in blocks of the stream's period)
-WARMUP_S = 5.0               # ignore the start of a stream (the output is still settling)
-BASELINE_S = 15.0            # the average over this long after the warmup is the reference
+WARMUP_S = 15.0              # ignore the start of a stream (the output is still settling: a baseline taken earlier was off by 10 ms)
+BASELINE_S = 30.0            # the average over this long after the warmup is the reference
 DISCONTINUITY_US = 100_000   # a jump this big is a restart of the output, not drift: start over
 
 
 class DriftTracker:
     def __init__(self, tau_s: float = TAU_S, warmup_s: float = WARMUP_S, baseline_s: float = BASELINE_S,
-                 enter_us: float = DEADBAND_ENTER_US, leave_us: float = DEADBAND_LEAVE_US, window_s: float = WINDOW_S,
+                 insert_enter_us: float = INSERT_ENTER_US, insert_leave_us: float = INSERT_LEAVE_US,
+                 drop_enter_us: float = DROP_ENTER_US, drop_leave_us: float = DROP_LEAVE_US, window_s: float = WINDOW_S,
                  max_fraction: float = MAX_FRACTION):
         self.tau_s, self.warmup_s, self.baseline_s = tau_s, warmup_s, baseline_s
-        self.enter_us, self.leave_us, self.window_s, self.max_fraction = enter_us, leave_us, window_s, max_fraction
+        self.insert_enter_us, self.insert_leave_us = insert_enter_us, insert_leave_us
+        self.drop_enter_us, self.drop_leave_us = drop_enter_us, drop_leave_us
+        self.window_s, self.max_fraction = window_s, max_fraction
         self.corrected_frames = 0  # signed running total (positive = dropped), for the log
         self.resets = 0
         self.reset()
@@ -81,9 +89,10 @@ class DriftTracker:
         if not self.ready or chunk_frames <= 0:
             return 0
         error = self.error_us
-        if not self._correcting and abs(error) >= self.enter_us:
+        enter, leave = (self.insert_enter_us, self.insert_leave_us) if error < 0 else (self.drop_enter_us, self.drop_leave_us)
+        if not self._correcting and abs(error) >= enter:
             self._correcting = True
-        elif self._correcting and abs(error) <= self.leave_us:
+        elif self._correcting and abs(error) <= leave:
             self._correcting = False
             self._carry = 0.0
         if not self._correcting:
