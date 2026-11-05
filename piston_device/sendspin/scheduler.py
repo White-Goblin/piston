@@ -8,6 +8,8 @@ can play is now + the sink's latency."""
 from collections import deque
 from typing import Callable, NamedTuple
 
+from .syncfix import apply_correction
+
 
 class Write(NamedTuple):
     at_us: float  # local time the first frame will play
@@ -33,7 +35,8 @@ class Scheduler:
 
     def __init__(self, to_local: Callable[[int], int], now: Callable[[], int], rate: int = 48000, frame_bytes: int = 4,
                  latency_us: int = 50_000, lookahead_us: int = 100_000, tolerance_us: int = 5_000, capacity_bytes: int = 4_000_000,
-                 decode: Callable[[bytes], bytes] | None = None):
+                 decode: Callable[[bytes], bytes] | None = None, tracker=None):
+        self.tracker = tracker  # a DriftTracker: trims single frames so the hardware clock cannot drift away (see syncfix.py)
         self._to_local, self._now = to_local, now
         self.latency_us, self.lookahead_us, self.tolerance_us = latency_us, lookahead_us, tolerance_us
         self.output_delay_us = 0
@@ -50,6 +53,8 @@ class Scheduler:
         self.rate, self.frame_bytes = rate, frame_bytes
         self.decode = decode
         self.decode_errors = 0
+        if self.tracker is not None:
+            self.tracker.reset()
         self._queue.clear()
         self._queued_bytes = 0
         self.cursor_us = None
@@ -117,6 +122,10 @@ class Scheduler:
                 actions.append(Drop(late))
                 pcm = pcm[late * self.frame_bytes:]
                 frames -= late
+            if self.tracker is not None and frames > 1:
+                trim = self.tracker.frames_to_correct(frames, self.rate)
+                if trim:
+                    pcm = apply_correction(pcm, self.frame_bytes, trim)  # the cursor below stays in the server's timeline
             actions.append(Write(cursor, pcm))
             self.cursor_us = cursor + self._us(frames)
         return actions
@@ -136,6 +145,13 @@ class Scheduler:
         if dropped:
             self.cursor_us = None
         return dropped
+
+    def observe(self, pending_us: float | None) -> None:
+        """What the output holds right now (None when unknown): feeds the drift tracker."""
+        if self.tracker is None or pending_us is None or self.cursor_us is None:
+            return
+        now = self._now()
+        self.tracker.observe(now, now + pending_us - self.cursor_us)
 
     def keepalive(self, min_fill_us: int = 10_000) -> list:
         """Silence that keeps the sink fed while nothing is due, as far ahead as the release window (latency + lookahead)
@@ -159,6 +175,8 @@ class Scheduler:
         """`stream/clear`. Without a timestamp everything goes (queue and cursor) and the sink must be flushed; with one,
         only queued chunks at or after it are discarded (audio already handed to the sink is past recall)."""
         if from_ts_us is None:
+            if self.tracker is not None:
+                self.tracker.reset()
             self._queue.clear()
             self._queued_bytes = 0
             self.cursor_us = None

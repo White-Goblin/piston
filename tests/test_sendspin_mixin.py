@@ -497,6 +497,27 @@ class CardTests(PluginCase):
         for bad in (-1, 101, "5", None, True):
             self.assertEqual(await self.plugin.sendspin_card_volume(bad), {"error": "volume must be 0-100"})
 
+    async def test_card_commands_faster_than_the_minimum_gap_are_ignored(self):
+        await self.boot()
+        peer = await self.connect_server()
+        await peer.send("server/state", {"metadata": {"timestamp": peer.server_now(), "title": "x"},
+                                         "controller": {"supported_commands": ["pause", "play", "next"]}})
+        await self.until(lambda: self.plugin._sendspin_card_session().card_commands == ["play", "pause", "next"])
+        clock = [100.0]
+        with mock.patch.object(sendspin_mixin.time, "monotonic", lambda: clock[0]):
+            self.assertEqual(await self.plugin.sendspin_card_command("pause"), {"ok": True})
+            clock[0] += 0.1
+            self.assertEqual(await self.plugin.sendspin_card_command("play"), {"error": "too fast"})
+            self.assertEqual(await self.plugin.sendspin_card_command("next"), {"error": "too fast"})
+            clock[0] += 0.5
+            self.assertEqual(await self.plugin.sendspin_card_command("next"), {"ok": True})
+            clock[0] += 0.1
+            self.assertEqual(await self.plugin.sendspin_card_command("stop"), {"error": "unknown command"})   # not rate limited, not sent
+        self.assertEqual((await peer.next("client/command"))[1], {"controller": {"command": "pause"}})
+        self.assertEqual((await peer.next("client/command"))[1], {"controller": {"command": "next"}})
+        with self.assertRaises(asyncio.TimeoutError):
+            await peer.next("client/command", timeout=0.2)
+
     async def test_the_final_inactive_card_is_emitted_when_the_server_leaves(self):
         await self.boot()
         peer = await self.connect_server()

@@ -11,9 +11,12 @@ thread to answer. While the pipe is empty the thread is blocked in read() and th
 while the stream is opening (and, via the scheduler's keepalive, whenever nothing is due) silence keeps flowing.
 
 The `Sink` interface is what the session uses; `FakeSink` records calls for tests."""
+import array
 import asyncio
+import fcntl
 import json
 import os
+import termios
 import time
 
 LATENCY_US = 50_000  # requested stream latency; the scheduler assumes this much between a write and the sound
@@ -75,6 +78,10 @@ class Sink:
 
     def abort(self) -> None:
         """Synchronous, best-effort stop for a plugin that is being unloaded: no waiting, never raises."""
+
+    def pending_us(self) -> float | None:
+        """How much audio the output holds that has not played yet, in microseconds; None when it cannot be known."""
+        return None
 
     def diagnostics(self) -> str:
         """A short description of the output's processes for the log when it stops answering (never raises)."""
@@ -142,6 +149,11 @@ class FakeSink(Sink):
     def abort(self):
         self.events.append(("abort",))
         self.opened = False
+
+    pending = None  # tests set the audio the fake output "holds", in microseconds
+
+    def pending_us(self):
+        return self.pending
 
 
 async def _run_pactl(*args: str) -> str:
@@ -348,6 +360,18 @@ class PipeWireSink(Sink):
     async def close(self) -> None:
         self._format = None  # an explicit close: later writes are dropped, never restarted
         await self._kill()
+
+    def pending_us(self) -> float | None:
+        """The audio waiting in the pipe to `pw-cat` (plus what asyncio still buffers for it), from the pipe's byte count."""
+        try:
+            writer = self._proc.stdin
+            pipe = writer.transport.get_extra_info("pipe")
+            counter = array.array("i", [0])
+            fcntl.ioctl(pipe.fileno(), termios.FIONREAD, counter, True)
+            waiting = counter[0] + writer.transport.get_write_buffer_size()
+            return waiting * 1_000_000 / (self._frame_bytes * self._format[0])
+        except Exception:  # noqa: BLE001 - no process, no pipe or an unusual transport: simply not known
+            return None
 
     def abort(self) -> None:
         """Kill the stream process at once, without waiting (the plugin is being unloaded or an open was cancelled)."""

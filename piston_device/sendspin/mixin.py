@@ -3,6 +3,7 @@
 See swe/specs/features/sendspin-player.md. `_sendspin_start` / `_sendspin_stop` are idempotent and are what the settings
 (enable switch), the plugin start/unload and the sleep/resume handling call."""
 import asyncio
+import time
 
 import decky
 
@@ -16,6 +17,7 @@ from .sink import PipeWireSink
 
 SLEEP_STOP_TIMEOUT_S = 2.5  # logind gives a delay inhibitor only a few seconds: leaving cleanly must fit in that
 SETTINGS_DEBOUNCE_S = 2.0  # Music Assistant raises the volume for an announcement and restores it: only the settled value is saved
+CARD_COMMAND_MIN_INTERVAL_S = 0.4  # card buttons: a faster press is ignored (each pause/play makes Music Assistant restart the stream)
 SETTING_KEYS = {"volume": "sendspin_volume", "muted": "sendspin_muted", "output_delay_ms": "sendspin_output_delay_ms"}
 
 
@@ -29,6 +31,7 @@ class SendspinMixin:
         self._sendspin_save_handle = None
         self._sendspin_lock = asyncio.Lock()
         self._sendspin_tasks = set()  # emits in flight
+        self._card_command_at = -1e9
         self._sendspin_stopping = (None, None)
         self.sendspin_asleep = False  # between the sleep announcement and the resume refresh the player stays down
 
@@ -115,8 +118,14 @@ class SendspinMixin:
             return {"error": "not connected"}
         if not isinstance(name, str) or name not in CARD_COMMANDS:
             return {"error": "unknown command"}
+        if name not in session.card_commands:
+            return {"error": "not offered"}
+        now = time.monotonic()
+        if now - self._card_command_at < CARD_COMMAND_MIN_INTERVAL_S:
+            return {"error": "too fast"}  # a button held down or mashed must not become a storm of commands to Music Assistant
         if not await session.send_command(name):
             return {"error": "not offered"}
+        self._card_command_at = now
         return {"ok": True}
 
     async def sendspin_card_volume(self, value) -> dict:

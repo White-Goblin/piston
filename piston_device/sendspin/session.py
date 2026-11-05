@@ -19,6 +19,7 @@ from .artwork import ARTWORK_TYPE, ArtworkAssembler
 from .card import CardState, changed as card_changed
 from .crypto import x25519_public
 from .scheduler import Drop, Flush, Scheduler, Silence, Write
+from .syncfix import DriftTracker
 from .sink import Sink, SinkError
 
 HANDSHAKE_TIMEOUT_S = 10
@@ -41,6 +42,8 @@ OPEN_BACKOFF_S = (0.5, 2, 5, 10, 20, 30)  # between attempts while the output do
 LEVEL_RETRY_S = 2.0   # a volume or mute change that could not be applied is tried again
 CLOSE_BUDGET_S = 2.5  # closing the output at the end of a stream or session
 LEVELS_BUDGET_S = 5.0  # applying a volume or mute change
+STATS_INTERVAL_S = 15.0  # while streaming, a line about stalls and drops is logged this often when there is something to report
+STALL_US = 40_000     # an audio-task iteration that came this much later than planned counts as a stall
 WRITE_STALL_S = 2.0   # an output that takes no audio for this long is treated as failed (a stalled pipe would block the audio task for good)
 
 
@@ -94,6 +97,10 @@ class SendspinSession:
         self._flush_wanted = False
         self._levels_dirty = True
         self._levels_retry_at = 0.0
+        self.stats = {"loop_stalls": 0, "max_gap_ms": 0, "dropped_frames": 0, "silence_gap_ms": 0}
+        self._stats_logged = 0.0
+        self._stats_rounds = 0
+        self._last_iteration = None
         self._decode_failures = []  # monotonic times of recent decode failures
         self._seen_decode_errors = 0
         self._admit = admit  # async (session) -> None to accept or a goodbye reason to reject (set by the listener)
@@ -105,7 +112,7 @@ class SendspinSession:
         self.unpaired = True
         self.clock = clk.ClockFilter()
         self.scheduler = Scheduler(self.clock.compute_client_time, now_us, latency_us=sink.latency_us, lookahead_us=lookahead_us,
-                                   tolerance_us=tolerance_us, capacity_bytes=BUFFER_CAPACITY)
+                                   tolerance_us=tolerance_us, capacity_bytes=BUFFER_CAPACITY, tracker=DriftTracker())
         self.scheduler.output_delay_us = output_delay_ms * 1000
         self.streaming = False
         self.format = None
@@ -510,6 +517,7 @@ class SendspinSession:
                 await self.sink.write(action.pcm)
             elif isinstance(action, Drop):
                 self.dropped_frames += action.frames
+                self.stats["dropped_frames"] += action.frames
             elif isinstance(action, Flush):
                 await self.sink.flush()
 
@@ -537,6 +545,7 @@ class SendspinSession:
         last_error_log = 0.0
         while True:
             try:
+                self._note_iteration()
                 if self.artwork.waiting() and self.artwork.poll():
                     self._cover_changed()
                 self._flush_card()
@@ -563,9 +572,38 @@ class SendspinSession:
             due = self.scheduler.next_due_in_us() if self.streaming and self._sink_ready else None
             await asyncio.sleep(POLL_INTERVAL_S if due is None else min(max(due / 1e6, 0.002), POLL_INTERVAL_S))
 
+    def _note_iteration(self) -> None:
+        """Bookkeeping for the log: how late this iteration of the audio task is (a stall of the event loop shows up here)."""
+        now = self._monotonic()
+        last, self._last_iteration = self._last_iteration, now
+        if last is None or not self.streaming:
+            return
+        gap_ms = (now - last) * 1000
+        self.stats["max_gap_ms"] = max(self.stats["max_gap_ms"], round(gap_ms))
+        if gap_ms > STALL_US / 1000:
+            self.stats["loop_stalls"] += 1
+        if now - self._stats_logged >= STATS_INTERVAL_S:
+            self._stats_logged = now
+            st = self.stats
+            tracker = self.scheduler.tracker
+            trimmed = tracker.corrected_frames if tracker is not None else 0
+            self._stats_rounds += 1
+            if st["loop_stalls"] or st["dropped_frames"] or st["silence_gap_ms"] or trimmed or self._stats_rounds % 4 == 0:  # and a heartbeat
+                drift = f", hardware drift {tracker.error_us / 1000:+.1f} ms, {trimmed:+d} frames trimmed" if tracker is not None and tracker.ready else ""
+                self._log(f"sendspin: last {STATS_INTERVAL_S:g} s: {st['loop_stalls']} audio task stalls (longest {st['max_gap_ms']} ms), "
+                          f"{st['dropped_frames']} late frames dropped, {st['silence_gap_ms']} ms of silence inserted, "
+                          f"{self.scheduler.queued_bytes} bytes queued, clock error {self.clock.error_us / 1000:.1f} ms{drift}")
+                if tracker is not None:
+                    tracker.corrected_frames = 0
+            for key in st:
+                st[key] = 0
+
     async def _playout(self) -> None:
-        await self._apply_actions(self.scheduler.poll())
+        actions = self.scheduler.poll()
+        self.stats["silence_gap_ms"] += round(sum(a.frames for a in actions if isinstance(a, Silence)) * 1000 / self.scheduler.rate)
+        await self._apply_actions(actions)
         await self._apply_actions(self.scheduler.keepalive())
+        self.scheduler.observe(self.sink.pending_us())  # the drift tracker watches how full the output is
 
     async def _reconcile_sink(self) -> None:
         now = self._monotonic()

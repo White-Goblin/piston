@@ -5,6 +5,7 @@ import { useTabRegistered } from "./tabState";
 import { CardState, coverUrl, formatTime, sendCommand, sendVolume, shownPosition, useCard } from "./card";
 
 const VOLUME_DEBOUNCE_MS = 150;
+const PRESS_GAP_MS = 350; // the backend ignores faster presses too; this keeps a mashed button from even calling it
 const VOLUME_HOLD_MS = 600; // after the last change the slider keeps the chosen value until the backend has had time to confirm it
 
 function Cover({ src }: { src?: string }) {
@@ -24,11 +25,17 @@ function Cover({ src }: { src?: string }) {
 
 function Controls({ card }: { card: CardState }) {
   const offered = card.commands ?? [];
+  const lastPress = useRef(0);
   const toggle = card.playing ? "pause" : "play";
   const button = (command: "previous" | "play" | "pause" | "next", label: string, icon: ReactNode) => (
     <DialogButton
       disabled={!offered.includes(command)}
-      onClick={() => void sendCommand(command)}
+      onClick={() => {
+        const now = Date.now();
+        if (now - lastPress.current < PRESS_GAP_MS) return;
+        lastPress.current = now;
+        void sendCommand(command);
+      }}
       aria-label={label}
       style={{ minWidth: 0, flex: 1, padding: "0.6em 0", display: "flex", justifyContent: "center" }}
     >

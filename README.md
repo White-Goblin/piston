@@ -33,8 +33,8 @@ Actions (Developer tools, automations and scripts):
 
 ## Install
 
-1. **Integration.** Download it with the **Download** button on this page (top right), then restart Home Assistant.
-2. **Plugin on the device.** Download `piston-<version>.zip` from the [releases](https://github.com/White-Goblin/piston/releases). In Decky Loader's settings enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
+1. **Integration.** Download Piston from the Home Assistant Marketplace, formerly HACS, then restart Home Assistant.
+2. **Plugin on the device.** This step is best performed on your SteamOS device using a mouse and keyboard in desktop mode. Download `piston-<version>.zip` from the [releases](https://github.com/White-Goblin/piston/releases). Go back to game mode. In Decky Loader's settings, enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. (Decky Loader itself must already be installed.) You only do this by hand once: from version 0.4.0 on, Home Assistant updates the plugin for you, see [Plugin updates](#plugin-updates).
 3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Piston; the panel shows a 6-digit code. Enter it in Home Assistant. Done: the entities appear.
 4. **Choose your apps.** In the plugin panel, under Apps in Home Assistant, add the Steam games and non-Steam apps you want as media player sources.
 5. **Wake on LAN** (to turn the device on from Home Assistant). Set this up on the device yourself, see [Wake on LAN](#wake-on-lan) below.
