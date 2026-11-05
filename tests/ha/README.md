@@ -16,6 +16,10 @@ uv pip install --python .venv-ha/bin/python -r tests/ha/requirements.txt
 .venv-ha/bin/python -m pytest tests/ha -q --cov --cov-config=tests/ha/.coveragerc
 ```
 
+CI runs this suite as the `ha-tests` job of `.github/workflows/tests.yml` (Python 3.14, the pinned requirements, and a coverage
+floor of 95 percent that protects the quality scale `test-coverage` rule). The release workflow does not depend on it. When you
+change the pinned Home Assistant release in `requirements.txt`, change the Python version in that job in the same commit.
+
 ## What the coverage number covers
 
 `.coveragerc` measures the `custom_components/piston` package and leaves out `proto/`, which is a verbatim copy of

@@ -6,12 +6,25 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: The tag, the manifest, package.json and the changelog agree
+        run: python3 scripts/check_release.py "$GITHUB_REF_NAME"
+      - name: HACS validation and Hassfest passed on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The HACS default list wants a release created after both checks pass. Re-run this workflow once they are green.
+          runs=$(gh run list --repo "$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --json workflowName,conclusion,event --limit 50)
+          for name in "HACS validation" "Hassfest"; do
+            ok=$(echo "$runs" | jq --arg n "$name" '[.[] | select(.workflowName == $n and .event == "push" and .conclusion == "success")] | length')
+            if [ "$ok" -lt 1 ]; then echo "::error::$name has no successful run on $GITHUB_SHA"; exit 1; fi
+          done
       - uses: pnpm/action-setup@v4
         with:
           version: 9

@@ -13,7 +13,7 @@ python3 scripts/sync_proto.py                    # copy piston_device/proto into
 python3 scripts/check_public.py                  # fail on emails, MACs and private IPs in the tree
 ```
 
-The integration code is tested against small stand-ins for Home Assistant (`tests/ha_stubs`), so Home Assistant specific behavior is proven by the separate suite in `tests/ha` (a real Home Assistant in a development-only virtualenv, see its README) and on a real instance. The protocol code in `piston_device/proto/` is stdlib only and shared by both sides; a test fails when the integration's copy differs.
+The integration code is tested against small stand-ins for Home Assistant (`tests/ha_stubs`), so Home Assistant specific behavior is proven by the separate suite in `tests/ha` (a real Home Assistant in a development-only virtualenv, see its README; CI runs it as the `ha-tests` job) and on a real instance. The protocol code in `piston_device/proto/` is stdlib only and shared by both sides; a test fails when the integration's copy differs.
 
 `scripts/check_public.py` also reads an optional git-ignored `.public-check.local` with one regular expression per line for your own identifiers (addresses, hostnames), so they cannot be committed by accident.
 
