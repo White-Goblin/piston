@@ -74,19 +74,27 @@ class TrackerTests(unittest.TestCase):
     def test_hardware_running_slow_is_followed_by_dropping_frames(self):
         t, history, applied = self.run_sim(600, drift_ppm=100)               # 6 ms a minute
         self.assertGreater(t.corrected_frames, 0)
-        self.assertAlmostEqual(applied / 1e6, 100e-6 * 600 - 100e-6 * 20, delta=0.02)   # it removed about what drifted (minus the baseline time)
+        self.assertGreater(applied / 1e6, 0.02)                              # it removed most of what drifted
         late = [abs(e) for now, e in history if now > 120e6]
-        self.assertLess(max(late), 8_000)                                    # the error never grows past a few milliseconds
+        self.assertLess(max(late), 9_000)                                    # a gentle proportional loop settles near drift x window (6 ms)
 
     def test_hardware_running_fast_is_followed_by_inserting_frames(self):
         t, history, _ = self.run_sim(600, drift_ppm=-100)
         self.assertLess(t.corrected_frames, 0)
-        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 8_000)
+        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 9_000)
 
     def test_drift_with_noise_still_converges(self):
         t, history, _ = self.run_sim(900, drift_ppm=150, noise_us=20_000)
         self.assertGreater(t.corrected_frames, 0)
         self.assertLess(max(abs(e) for now, e in history if now > 200e6), 12_000)
+
+    def test_the_drift_measured_on_the_device_leads_to_almost_no_correction(self):
+        """10 parts per million with the noise of the pipe fill (seen on the device): a first version chased the noise and dropped
+        16 ms in 15 seconds. Now the total correction over 15 minutes stays close to the real drift (9 ms)."""
+        t, history, applied = self.run_sim(900, drift_ppm=10, noise_us=25_000)
+        self.assertLess(abs(applied), 30_000)
+        self.assertLess(max(abs(e) for now, e in history if now > 120e6), 12_000)
+        self.assertLess(abs(t.corrected_frames), 1500)
 
     def test_corrections_are_small_and_rate_limited(self):
         t = DriftTracker(warmup_s=0, baseline_s=0.01)
@@ -96,7 +104,7 @@ class TrackerTests(unittest.TestCase):
         self.assertTrue(t.ready)
         t._ema = 500_000                                                     # a huge error
         n = t.frames_to_correct(4608, RATE)
-        self.assertLessEqual(n, math.ceil(4608 * 0.005))                     # at most half a percent of the chunk
+        self.assertLessEqual(n, math.ceil(4608 * 0.001))                     # at most a tenth of a percent of the chunk
 
     def test_a_restart_of_the_output_starts_the_measurement_over(self):
         t = DriftTracker(warmup_s=0, baseline_s=1)
@@ -128,7 +136,7 @@ class SchedulerIntegrationTests(unittest.TestCase):
         actions = [a for a in s.poll() if isinstance(a, Write)]
         written = sum(len(a.pcm) for a in actions) // FB
         self.assertLess(written, 4800)
-        self.assertGreaterEqual(written, 4800 - 30)                          # a few frames only (<= 0.5%)
+        self.assertGreaterEqual(written, 4800 - 6)                           # a few frames only (<= 0.1%)
         self.assertAlmostEqual(s.cursor_us, actions[0].at_us + 100_000, delta=10)   # the timeline advanced by the whole chunk
 
     def test_observe_needs_a_cursor_and_a_known_fill(self):

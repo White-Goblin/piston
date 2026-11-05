@@ -8,15 +8,17 @@ difference with single frames dropped or inserted. We measure it from how full t
 
 `DriftTracker` is the estimator and the planner (pure logic). `error_us` is how much later than modelled the audio plays, as a
 slow average relative to the first seconds of the stream (a constant offset, such as the sink's own latency, does not matter,
-only its change). Corrections are small: spread over a window of two seconds, at most half a percent of the audio, and only
-once the error is a few milliseconds, so they are inaudible."""
+only its change). Corrections are small and slow: spread over a window of a minute, at most a tenth of a percent of the audio, and only
+once the error is a few milliseconds, so they are inaudible. (A first version planned them over two seconds and chased the
+noise of the measurement: on the device it dropped 16 ms in 15 seconds and nearly emptied the pipe. Measured drift of the
+hardware there is about 10 parts per million, so a gentle loop is all that is needed.)"""
 import math
 
-DEADBAND_ENTER_US = 3_000    # start correcting at this much error
-DEADBAND_LEAVE_US = 1_000    # keep correcting until it is this small
-WINDOW_S = 2.0               # a correction is planned to be done in this time
-MAX_FRACTION = 0.005         # never alter more than this share of the audio (5 ms per second)
-TAU_S = 30.0                 # time constant of the average: the pipe fill is noisy (it moves in blocks of the stream's period)
+DEADBAND_ENTER_US = 4_000    # start correcting at this much error
+DEADBAND_LEAVE_US = 1_500    # keep correcting until it is this small
+WINDOW_S = 60.0              # a correction is planned over this long: gentle, because the measurement is noisy
+MAX_FRACTION = 0.001         # never alter more than this share of the audio (1 ms per second)
+TAU_S = 45.0                 # time constant of the average: the pipe fill is noisy (it moves in blocks of the stream's period)
 WARMUP_S = 5.0               # ignore the start of a stream (the output is still settling)
 BASELINE_S = 15.0            # the average over this long after the warmup is the reference
 DISCONTINUITY_US = 100_000   # a jump this big is a restart of the output, not drift: start over
