@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { LibraryGame } from "../control/device";
-import { getPairingState, getSettings, getStatus, resetPairing, saveApps } from "./api";
+import { getPairingState, getSettings, getStatus, resetPairing, saveApps, setRemoteInput } from "./api";
 import { PairingState, PanelState, Settings, Status } from "./types";
 
 const POLL_MS = 2000;
@@ -32,6 +32,11 @@ export function usePanelState(): PanelState | undefined {
     setApps: (apps: LibraryGame[]) => {
       setSettings({ ...settings, apps });
       saveApps(apps).then((saved) => setSettings((cur) => cur && { ...cur, apps: saved }));
+    },
+    // Optimistic: the panel shows the choice at once, the backend's answer (and the next poll) confirm it
+    setRemoteInput: (enabled: boolean) => {
+      setStatus({ ...status, remote_input: enabled, remote_input_error: "" });
+      setRemoteInput(enabled).then((r) => setStatus((cur) => cur && { ...cur, remote_input: r.remote_input, remote_input_error: r.error }));
     },
     reset: async () => {
       setPairing(await resetPairing());

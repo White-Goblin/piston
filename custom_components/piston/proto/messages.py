@@ -1,5 +1,6 @@
 """Frame shapes, validation and version negotiation for the LAN protocol (stdlib only)."""
 import json
+import math
 
 import re
 
@@ -29,7 +30,18 @@ INTERNAL = "internal"
 VERSION_SKEW = "version_skew"
 ERROR_CODES = (BAD_REQUEST, UNAUTHORIZED, BUSY, OFFLINE, NOT_RUNNING, UNSUPPORTED, INTERNAL, VERSION_SKEW)
 
-FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status")
+FRAME_TYPES = ("hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status", "input")
+
+# Remote input (additive, protocol stays 3): a fire-and-forget `input` frame carries batches of pointer and keyboard events
+# from Home Assistant to the device; no result is ever sent for it. The `device` group reports `input: {enabled}`.
+MAX_INPUT_EVENTS = 64
+MAX_INPUT_TEXT_LEN = 256
+MAX_INPUT_DELTA = 2000
+MAX_INPUT_ERROR_LEN = 255
+INPUT_KEYS = ("Enter", "Backspace", "Escape", "Tab", "Up", "Down", "Left", "Right", "Home", "End", "PageUp", "PageDown",
+              "Delete", "Space")
+INPUT_BUTTONS = ("l", "r")
+INPUT_ACTIONS = ("steam", "qam")
 
 # Update lane frames (see docs/protocol.md): HA tells the device which release to install, the device reports progress.
 UPDATE_STATES = ("idle", "downloading", "waiting_for_ui", "waiting_for_confirmation", "installing", "failed")
@@ -72,6 +84,66 @@ def update_status(state: str, version: str = "", reason: str | None = None) -> d
     if reason is not None:
         frame["reason"] = reason
     return frame
+
+
+def input_frame(seq: int, events: list) -> dict:
+    return {"type": "input", "seq": seq, "events": events}
+
+
+def _number(value, what: str, integer: bool = False):
+    ok = isinstance(value, int) if integer else isinstance(value, (int, float))
+    _require(ok and not isinstance(value, bool), f"{what} must be a{'n integer' if integer else ' number'}")
+    _require(math.isfinite(value) and abs(value) <= MAX_INPUT_DELTA, f"{what} must be within +-{MAX_INPUT_DELTA}")
+    return value
+
+
+def input_events(events) -> list:
+    """Validate a list of input events and return them normalized (unknown fields dropped); raises ProtocolError(bad_request)."""
+    _require(isinstance(events, list), "events must be a list")
+    _require(0 < len(events) <= MAX_INPUT_EVENTS, f"events must hold 1 to {MAX_INPUT_EVENTS} items")
+    out = []
+    for event in events:
+        _require(isinstance(event, dict), "each event must be an object")
+        kind = event.get("k")
+        if kind == "move":
+            out.append({"k": "move", "dx": _number(event.get("dx"), "move.dx"), "dy": _number(event.get("dy"), "move.dy")})
+        elif kind == "scroll":
+            out.append({"k": "scroll", "dx": _number(event.get("dx", 0), "scroll.dx", True),
+                        "dy": _number(event.get("dy", 0), "scroll.dy", True)})
+        elif kind == "click":
+            _require(event.get("b") in INPUT_BUTTONS, "click.b must be l or r")
+            out.append({"k": "click", "b": event["b"]})
+        elif kind == "key":
+            _require(event.get("key") in INPUT_KEYS, "key.key is not a known key")
+            out.append({"k": "key", "key": event["key"]})
+        elif kind == "text":
+            text = event.get("s")
+            _require(isinstance(text, str) and 0 < len(text) <= MAX_INPUT_TEXT_LEN,
+                     f"text.s must be a string of 1 to {MAX_INPUT_TEXT_LEN} characters")
+            out.append({"k": "text", "s": text})
+        elif kind == "action":
+            _require(event.get("a") in INPUT_ACTIONS, "action.a must be steam or qam")
+            out.append({"k": "action", "a": event["a"]})
+        elif kind == "release":
+            out.append({"k": "release"})
+        else:
+            _require(False, "unknown event kind")
+    return out
+
+
+def device_input(data) -> dict | None:
+    """The `input` field of the `device` group: None when absent (a plugin that predates remote input), else
+    {"enabled": bool} with an optional `error` text (the virtual input devices could not be created); raises
+    ProtocolError(bad_request) when present but malformed."""
+    if data is None:
+        return None
+    _require(isinstance(data, dict) and isinstance(data.get("enabled"), bool), "device.input must be {enabled: true or false}")
+    out = {"enabled": data["enabled"]}
+    error = data.get("error")
+    if error is not None:
+        _require(isinstance(error, str) and len(error) <= MAX_INPUT_ERROR_LEN, f"device.input.error must be a string of at most {MAX_INPUT_ERROR_LEN} characters")
+        out["error"] = error
+    return out
 
 
 def cmd(msg_id: int, name: str, data: dict | None = None) -> dict:
@@ -174,6 +246,9 @@ def parse(text) -> dict:
         frame.setdefault("version", "")
         if "reason" in frame:
             _require(frame["reason"] in UPDATE_REASONS, "update_status.reason invalid")
+    elif ftype == "input":
+        _require(_is_id(frame.get("seq")), "input.seq must be a non-negative integer")
+        frame["events"] = input_events(frame.get("events"))
     elif ftype == "cmd":
         _require(_is_id(frame.get("id")), "cmd.id must be a non-negative integer")
         _require(_is_name(frame.get("name")), "cmd.name invalid")

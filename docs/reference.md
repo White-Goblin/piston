@@ -64,6 +64,62 @@ From version 0.7.0 the device shows what the Sendspin player is playing and has 
 - **Buttons** work through Music Assistant (a button pressed again within 0.4 seconds is ignored, because every pause or play restarts the stream), so one that Music Assistant does not offer for the current queue is disabled (for example next on a one-track queue does nothing). The slider sets this device's own Sendspin player volume, the same value Music Assistant shows; it does not change the system or HDMI CEC volume.
 - **Limits:** no seeking, shuffle, repeat, mute button or queue. An announcement does not change the card: Music Assistant sends no information about it, so the card keeps showing the music. The card needs the Steam interface, so it is not available in desktop mode (the music keeps playing). The cover is a 512 pixel JPEG from Music Assistant.
 
+## Remote card
+
+The dashboard card `piston-remote-card` (name "Piston remote") ships inside the integration: when Home Assistant starts, the integration serves `custom_components/piston/www/piston-remote-card.js` and adds it to the frontend, with the integration version and a fingerprint of the file in the address so the Home Assistant app loads the new file after an update. If registering the card fails, only the card is lost; a warning is logged.
+
+### Configuration
+
+| Key | Default | Meaning |
+|---|---|---|
+| `type` | | `custom:piston-remote-card` |
+| `device_id` | | A Piston device from Home Assistant's device registry. The card finds the media player of that device itself, so renaming an entity changes nothing |
+| `speed` | 1 | Pointer speed multiplier, 0.25 to 4 (applied in the card; the device has no speed setting) |
+| `pad_height` | 34 (with limits) | Touchpad height as a percentage of the screen height, 15 to 80. Setting it also lifts the touchpad's default minimum (220 px) and maximum (380 px), so a phone in a panel view can give the touchpad all the room |
+| `gap_pad_volume` | 0 | Extra empty space in pixels (0 to 160) between the touchpad and the volume control |
+| `gap_volume_buttons` | 0 | Extra empty space in pixels (0 to 160) between the volume control and the Steam, wheel and keyboard buttons. Without a volume control the first gap is used instead |
+| `show_power`, `show_apps`, `show_volume`, `show_keyboard` | true | Hide the power button, the app picker, the volume buttons, or the keyboard button |
+
+The three layout settings are sliders in the card editor. In a panel (single card) view, raise `pad_height` and the gaps until the card fills your screen; they are independent, so you can give the extra room to the touchpad, to either gap, or split it.
+
+### What the card does
+
+- **Touchpad.** Drag moves the pointer, a short tap clicks, a two-finger tap right-clicks, two fingers scroll (a flick keeps scrolling and slows down by the speed of your finger). Moves are summed once per animation frame; clicks, keys and scroll steps are sent at once.
+- **Arrow wheel.** A tap on a wedge sends the arrow, holding repeats it (after 350 ms, every 80 ms), and moving your thumb around the ring scrolls (clockwise is down) instead, linearly: it follows the thumb and stops when it stops. The centre sends Enter.
+- **Buttons.** Steam menu and Quick Access open or close the menu like the physical buttons; Back (it sends Esc); a keyboard button that opens the phone keyboard. The card uses your Home Assistant theme's colors (text, primary and error colors, divider and card background), so it follows light and dark themes. Typing is mirrored into minimal edits, so swipe typing, autocorrect and dictation work. Only ASCII reaches the device: other characters are dropped and a notice says so.
+- **Volume, power, apps.** The volume control follows how the device's volume works. With system volume the media player has a level, so the card shows a slider (0 to 100, with the level shown and a mute button; the new level is sent at most every 100 ms while you drag and the final one when you let go). With HDMI CEC there are only steps and an assumed mute, so the card shows volume down, mute and up buttons (hold to repeat). Both use the media player's own services and switch by themselves if the device changes mode. The power button follows the media player: off or asleep wakes the device (Wake on LAN, no question); awake asks before turning it off (sleep or shutdown, as set in the options). The picker lists the media player's sources, which are Steam and the apps added under *Apps in Home Assistant* in the Piston panel on the device; choosing an app launches it, and choosing Steam closes the running app.
+
+### States
+
+| State | Pad, wheel, Back, keyboard | Steam and Quick Access | Power | Banner |
+|---|---|---|---|---|
+| On, game mode | yes | yes | yes | none |
+| On, desktop mode | yes (no cursor is drawn: the real one shows) | no | yes | Desktop mode |
+| Off or asleep | no | no | yes (wakes it) | Device is off |
+| Not reachable | no | no | yes | Can't reach the device |
+| Plugin older than 0.8.0 | no | no | yes | Update the Piston plugin |
+| **Allow remote input** off on the device | no | no | yes | Remote input is turned off on the device |
+| The device could not create its virtual input devices | no | no | yes | The device could not start remote input |
+| Not an administrator, option off | no | no | yes | Only administrators can use remote input |
+| Plugin and integration versions differ | no | no | yes | The Piston plugin and integration versions do not match |
+
+Volume and the app picker follow the media player: they work while the device is on.
+
+### Access and safety
+
+- The card talks to Home Assistant, never to the device directly: it uses two websocket commands, `piston/input/subscribe` (the status above) and `piston/input/send` (the events), so it works over https and through Home Assistant's remote access. The device keeps its single paired, authenticated connection; nothing new listens.
+- Both commands need a Home Assistant administrator unless the option **Remote input for all users** is on; this is checked on every call.
+- Typed text passes through Home Assistant and the integration in memory only and is never logged or stored. Diagnostics report only whether remote input is available and counters.
+- The device creates its virtual pointer and keyboard (`Piston Pointer`, `Piston Keyboard`) on the first input, and removes them when **Allow remote input** is turned off and when the plugin unloads. Anything held down is released when the card goes away, the page goes to the background, Home Assistant restarts or the connection drops.
+- Several phones can use the card at the same time; the last input wins.
+
+### Limits
+
+- Phone first: portrait on a phone is what it is designed for; other sizes work but are not tuned.
+- On an iPhone a two-finger sideways drag also switches dashboard tabs in the Home Assistant app and the card cannot block it; use a dashboard with one view.
+- Only ASCII can be typed. Click-and-drag is not supported.
+- The cursor and the Steam menu and Quick Access buttons need the Steam interface, so they are not available in desktop mode.
+
 ## Plugin updates
 
 From version 0.4.0 the plugin on the device follows the integration: when you update the integration and restart Home Assistant, the device is brought to the same version.

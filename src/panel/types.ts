@@ -16,6 +16,10 @@ export interface Status {
   connected: boolean;
   port: number;
   error: string;
+  /** Home Assistant may move the pointer and type on this device (the remote card) */
+  remote_input: boolean;
+  /** Set while remote input is on but the virtual input devices could not be created */
+  remote_input_error: string;
 }
 
 export interface PairingState {
@@ -44,5 +48,6 @@ export interface PanelState {
   status: Status;
   pairing: PairingState;
   setApps: (apps: LibraryGame[]) => void;
+  setRemoteInput: (enabled: boolean) => void;
   reset: () => Promise<void>;
 }

@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from . import config_flow
+from . import card, config_flow, input_api
 from .client import DeckyClient, VersionSkew, send_unpair
 from .const import CONF_DEVICE_ID, CONF_HOST, CONF_MAC, CONF_NAME, CONF_PORT, CONF_SECRET, DEFAULT_PORT, DOMAIN, PLATFORMS
 from .coordinator import DeckyCoordinator
@@ -50,6 +50,8 @@ def _text_fetcher(hass: HomeAssistant):
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = entry.data
+    input_api.async_register(hass)  # the remote card's websocket commands (once per run)
+    await card.async_register_card(hass, await _integration_version(hass))  # and the card itself (once per run)
 
     def persist_mac(mac: str) -> None:
         hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MAC: mac})

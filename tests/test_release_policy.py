@@ -66,6 +66,16 @@ class HacsDefaultListTests(unittest.TestCase):
         self.assertRegex(workflow, r"--cov-fail-under=\d+")
         self.assertNotIn("pytest", read(".github", "workflows", "release.yml"))
 
+    def test_the_release_workflow_runs_the_card_tests_before_packaging(self):
+        workflow = read(".github", "workflows", "release.yml")
+        self.assertIn('node --test "tests/js/*.test.js"', workflow)
+        self.assertLess(workflow.index("node --test"), workflow.index("package_plugin.py"))
+
+    def test_the_card_is_not_git_ignored_so_hacs_installs_it(self):
+        import subprocess
+        ignored = subprocess.run(["git", "check-ignore", "-q", "custom_components/piston/www/piston-remote-card.js"], cwd=ROOT)
+        self.assertNotEqual(ignored.returncode, 0, "the card is git-ignored, so a release would not contain it")
+
     def test_the_brand_icon_exists(self):
         self.assertTrue(os.path.isfile(os.path.join(ROOT, "custom_components", "piston", "brand", "icon.png")))
 
@@ -76,10 +86,13 @@ class HacsDefaultListTests(unittest.TestCase):
 
 
 class ReleaseConsistencyTests(unittest.TestCase):
-    def tree(self, manifest="0.7.0", package="0.7.0", changelog="## 0.7.0\n\nNotes.\n"):
+    def tree(self, manifest="0.7.0", package="0.7.0", changelog="## 0.7.0\n\nNotes.\n", card=True):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root)
-        os.makedirs(os.path.join(root, "custom_components", "piston"))
+        os.makedirs(os.path.join(root, "custom_components", "piston", "www"))
+        if card:
+            with open(os.path.join(root, *check_release.CARD_PATH), "w") as f:
+                f.write("// the card\n")
         with open(os.path.join(root, "custom_components", "piston", "manifest.json"), "w") as f:
             json.dump({"version": manifest}, f)
         with open(os.path.join(root, "package.json"), "w") as f:
@@ -96,6 +109,14 @@ class ReleaseConsistencyTests(unittest.TestCase):
         self.assertEqual(len(found), 3)           # manifest, package.json and the missing changelog section
         self.assertTrue(any("manifest.json" in line for line in found))
         self.assertTrue(any("package.json" in line for line in found))
+
+    def test_a_release_without_the_remote_card_is_refused(self):
+        found = check_release.problems("v0.7.0", self.tree(card=False))
+        self.assertEqual(len(found), 1)
+        self.assertIn("piston-remote-card.js", found[0])
+        root = self.tree()
+        open(os.path.join(root, *check_release.CARD_PATH), "w").close()          # an empty file is as good as none
+        self.assertEqual(len(check_release.problems("v0.7.0", root)), 1)
 
     def test_a_missing_changelog_section_is_reported(self):
         self.assertEqual(len(check_release.problems("v0.7.0", self.tree(changelog="## 0.6.0\n\nOld.\n"))), 1)

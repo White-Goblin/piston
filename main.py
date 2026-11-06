@@ -15,6 +15,7 @@ from piston_device.audio import AudioMixin
 from piston_device.control import ControlMixin
 from piston_device.controllers import ControllersMixin
 from piston_device.http_server import HttpServerMixin
+from piston_device.input import InputMixin
 from piston_device.media import MediaMixin
 from piston_device.media_keys import MediaKeyMixin
 from piston_device.pairing import PairingMixin
@@ -48,6 +49,7 @@ class Plugin(
     PipSignalMixin,
     WolMixin,
     UpdateMixin,
+    InputMixin,
     HttpServerMixin,
 ):
     def _commands(self) -> dict:
@@ -75,6 +77,8 @@ class Plugin(
             self.loop.create_task(advertiser.sync())
 
     def _on_link(self, connected: bool) -> None:
+        if not connected:
+            self._input_link_lost()  # nobody is driving the pointer any more: let go of everything held
         if not connected and self.pip_sessions:
             self._pip_close_all(notify=False)  # nobody left to relay for
             self.loop.create_task(decky.emit("pip", {"action": "hide"}))
@@ -103,6 +107,8 @@ class Plugin(
             "connected": self.server is not None and self.server.connected,
             "port": self.server.port if self.server is not None else 0,
             "error": self.error,
+            "remote_input": self.remote_input,
+            "remote_input_error": self.input_error if self.remote_input else "",
         }
 
     # --- lifecycle --------------------------------------------------------
@@ -130,6 +136,7 @@ class Plugin(
         self._init_pairing()
         self._init_pip_signal()
         self._init_update()
+        self._init_input()
         decky.logger.info("Piston starting")
 
         self.server = ProtocolServer(
@@ -143,6 +150,7 @@ class Plugin(
             hello_extra=self._hello_extra,
             on_update=self._on_update_frame,
             update_status=self._update_status,
+            on_input=self._on_input,
         )
         try:
             await self.server.start()
@@ -192,6 +200,11 @@ class Plugin(
                 stop()
             except Exception as e:  # noqa: BLE001 - one failing stop must not keep the others from running
                 decky.logger.warning(f"Piston unload: {name} abort failed: {e!r}")
+        try:
+            if hasattr(self, "input_keys"):  # a plugin unloaded while it was still starting has nothing to close
+                self._input_abort()  # remote input: release, close the virtual devices, stop the key worker (all synchronous)
+        except Exception as e:  # noqa: BLE001
+            decky.logger.warning(f"Piston unload: remote input cleanup failed: {e!r}")
         if getattr(self, "keyboard", None) is not None:
             self._close_keyboard()
         http_server = getattr(self, "http_server", None)

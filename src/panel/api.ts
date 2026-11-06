@@ -8,3 +8,4 @@ export const getStatus = callable<[], Status>("get_status");
 export const getPairingState = callable<[], PairingState>("get_pairing_state");
 export const resetPairing = callable<[], PairingState>("reset_pairing");
 export const getWolInfo = callable<[], WolInfo>("get_wol_info");
+export const setRemoteInput = callable<[enabled: boolean], { remote_input: boolean; error: string }>("set_remote_input");

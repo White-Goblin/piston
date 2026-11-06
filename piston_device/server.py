@@ -4,8 +4,10 @@ One authenticated connection at a time: a new one replaces the old. Commands run
 a newer `launch` supersedes a queued older one.
 """
 import asyncio
+import json
 import logging
 import secrets
+import time
 from typing import Awaitable, Callable
 
 from . import wsproto
@@ -20,12 +22,74 @@ RESYNC = "resync"  # built-in command: answer ok, then send every state group ag
 Handler = Callable[[dict], Awaitable[dict | None]]
 
 
+INPUT_FRAMES_PER_SECOND = 120  # accepted per connection; above it moves and scrolls are summed, other events still go through
+INPUT_CARRY_FLUSH = 0.01  # seconds: summed moves waiting for room are delivered this long after the last frame
+
+
+class InputRateLimiter:
+    """Caps input frames per second. Frames over the cap keep their clicks, keys, text and actions in order, but their
+    moves and scrolls are summed into a carry that rides on the next frame that fits (or a flush after a moment)."""
+
+    def __init__(self, per_second: int | None = None, clock: Callable[[], float] = time.monotonic):
+        self._per_second, self._clock = per_second or INPUT_FRAMES_PER_SECOND, clock
+        self._stamps: list[float] = []
+        self._move = [0.0, 0.0]
+        self._scroll = [0, 0]
+        self._pending = False
+
+    def admit(self, events: list) -> list:
+        """The events to deliver now for one received frame (may be fewer, merged, or with the carry added)."""
+        now = self._clock()
+        self._stamps = [t for t in self._stamps if now - t < 1.0]
+        if len(self._stamps) < self._per_second:
+            self._stamps.append(now)
+            return self.take_carry() + events
+        kept = []
+        for event in events:
+            if event["k"] == "move":
+                self._move[0] += event["dx"]
+                self._move[1] += event["dy"]
+                self._pending = True
+            elif event["k"] == "scroll":
+                self._scroll[0] += event["dx"]
+                self._scroll[1] += event["dy"]
+                self._pending = True
+            else:
+                kept.append(event)
+        return kept
+
+    def flush(self) -> list | None:
+        """The carry as events when a frame fits under the cap now (and counts as one), else None."""
+        now = self._clock()
+        self._stamps = [t for t in self._stamps if now - t < 1.0]
+        if len(self._stamps) >= self._per_second:
+            return None
+        self._stamps.append(now)
+        return self.take_carry()
+
+    @property
+    def has_carry(self) -> bool:
+        return self._pending
+
+    def take_carry(self) -> list:
+        out = []
+        if self._pending:
+            if self._move[0] or self._move[1]:
+                out.append({"k": "move", "dx": self._move[0], "dy": self._move[1]})
+            if self._scroll[0] or self._scroll[1]:
+                out.append({"k": "scroll", "dx": self._scroll[0], "dy": self._scroll[1]})
+        self._move, self._scroll, self._pending = [0.0, 0.0], [0, 0], False
+        return out
+
+
 class _Conn:
     def __init__(self, reader, writer):
         self.reader, self.writer = reader, writer
         self.pending: list = []  # queued cmd frames not yet started
         self.wake = asyncio.Event()
         self.closed = False
+        self.limiter = InputRateLimiter()
+        self.flush_handle = None  # timer for summed input that did not fit under the rate cap
 
     def send(self, frame: dict) -> None:
         if not self.closed:
@@ -39,7 +103,8 @@ class ProtocolServer:
                  on_connection: Callable[[bool], None] | None = None,
                  hello_extra: Callable[[], dict] | None = None,
                  on_update: Callable[[dict], None] | None = None,
-                 update_status: Callable[[], dict] | None = None):
+                 update_status: Callable[[], dict] | None = None,
+                 on_input: Callable[[list], None] | None = None):
         self._device_id, self._secret, self.pairing = device_id, secret, pairing
         self.commands: dict[str, Handler] = commands
         self._snapshot = snapshot
@@ -51,6 +116,8 @@ class ProtocolServer:
         # `update_status()` returns the current {state, version, reason?} for the greeting of a lane connection.
         self._on_update = on_update
         self._update_status = update_status or (lambda: {"state": "idle", "version": ""})
+        # Remote input: `on_input(events)` is sync and must return quickly; no reply frame exists for `input`.
+        self.on_input = on_input
         self.update_conn: _Conn | None = None  # the connection update_status frames go to (normal or lane)
         self._server = None
         self.conn: _Conn | None = None
@@ -172,8 +239,43 @@ class ProtocolServer:
             try:
                 return m.parse(text)
             except m.ProtocolError as e:
+                if self._is_input_frame(text):
+                    log.debug("dropped a malformed input frame: %s", e.message)  # fire and forget: nobody to tell
+                    continue
                 conn.send(m.result_error(0, e.code, e.message))
                 raise wsproto.WsClosed(CLOSE_BAD_REQUEST, e.message) from None
+
+    @staticmethod
+    def _is_input_frame(text) -> bool:
+        try:
+            frame = json.loads(text)
+        except (ValueError, TypeError):
+            return False
+        return isinstance(frame, dict) and frame.get("type") == "input"
+
+    def _handle_input(self, conn: _Conn, frame: dict) -> None:
+        limiter = conn.limiter
+        events = limiter.admit(frame["events"])
+        self._deliver_input(events)
+        if limiter.has_carry and conn.flush_handle is None:
+            conn.flush_handle = asyncio.get_running_loop().call_later(INPUT_CARRY_FLUSH, self._flush_input, conn)
+
+    def _flush_input(self, conn: _Conn) -> None:
+        conn.flush_handle = None
+        if conn.closed or not conn.limiter.has_carry:
+            return
+        events = conn.limiter.flush()
+        if events is None:  # the cap is still full: try again a moment later
+            conn.flush_handle = asyncio.get_running_loop().call_later(INPUT_CARRY_FLUSH, self._flush_input, conn)
+            return
+        self._deliver_input(events)
+
+    def _deliver_input(self, events: list) -> None:
+        if events and self.on_input is not None:
+            try:
+                self.on_input(events)
+            except Exception:  # noqa: BLE001 - a failing input hook must not drop the connection
+                log.exception("input handler failed")
 
     async def _session(self, conn: _Conn) -> None:
         secret = self._secret()
@@ -269,6 +371,9 @@ class ProtocolServer:
                 if frame["type"] == "update":
                     self._handle_update(conn, frame)
                     continue
+                if frame["type"] == "input":
+                    self._handle_input(conn, frame)
+                    continue
                 if frame["type"] != "cmd":
                     conn.send(m.result_error(0, m.BAD_REQUEST, "only commands are accepted"))
                     continue
@@ -276,6 +381,9 @@ class ProtocolServer:
         finally:
             worker.cancel()
             pinger.cancel()
+            if conn.flush_handle is not None:
+                conn.flush_handle.cancel()
+                conn.flush_handle = None
             for frame in conn.pending:
                 conn.send(m.result_error(frame["id"], m.OFFLINE, "connection closed"))
             conn.pending.clear()

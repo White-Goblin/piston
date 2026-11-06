@@ -90,12 +90,35 @@ class Bus:
         await asyncio.sleep(0)
 
 
+class _Http:
+    """homeassistant.components.http's static path registry, recording what the integration registers."""
+
+    def __init__(self):
+        self.static_paths = []
+
+    async def async_register_static_paths(self, configs):
+        self.static_paths.extend(configs)
+
+
+class StaticPathConfig:
+    def __init__(self, url_path, path, cache_headers=True):
+        self.url_path, self.path, self.cache_headers = url_path, path, cache_headers
+
+
+def _add_extra_js_url(hass, url, es5=False):
+    hass.data.setdefault("extra_js_urls", []).append(url)
+
+
 class HomeAssistant:
     def __init__(self):
+        self.http = _Http()
         self.data = {}
         self.config_entries = ConfigEntries()
         self.bus_events = []
         self.bus = Bus()
+
+    async def async_add_executor_job(self, func, *args):
+        return func(*args)
 
     def async_create_task(self, coro):
         import asyncio
@@ -445,6 +468,30 @@ class _Sel:
         self.config = config
 
 
+class _WebsocketApi:
+    """Just enough of homeassistant.components.websocket_api to import and register the remote card's commands."""
+    ERR_NOT_FOUND, ERR_UNAUTHORIZED, ERR_INVALID_FORMAT = "not_found", "unauthorized", "invalid_format"
+
+    @staticmethod
+    def websocket_command(schema):
+        def decorate(func):
+            func._ws_schema = schema
+            return func
+        return decorate
+
+    @staticmethod
+    def async_response(func):
+        return func
+
+    @staticmethod
+    def event_message(msg_id, event):
+        return {"id": msg_id, "type": "event", "event": event}
+
+    @staticmethod
+    def async_register_command(hass, handler):
+        hass.data.setdefault("ws_commands", []).append(handler)
+
+
 def install() -> None:
     try:
         if importlib.util.find_spec("homeassistant") is not None:
@@ -461,7 +508,9 @@ def install() -> None:
     _module("homeassistant.helpers.service_info.zeroconf", ZeroconfServiceInfo=ZeroconfServiceInfo)
     _module("homeassistant.helpers.aiohttp_client", async_get_clientsession=lambda hass: None)
     _module("homeassistant.helpers.entity", Entity=Entity)
-    _module("homeassistant.helpers.device_registry", CONNECTION_NETWORK_MAC="mac", DeviceInfo=DeviceInfo)
+    _module("homeassistant.helpers.device_registry", CONNECTION_NETWORK_MAC="mac", DeviceInfo=DeviceInfo,
+            async_get=lambda hass: types.SimpleNamespace(async_get=lambda device_id: None))
+    sys.modules["homeassistant.helpers"].device_registry = sys.modules["homeassistant.helpers.device_registry"]
     _module("homeassistant.helpers.issue_registry", async_create_issue=async_create_issue,
             async_delete_issue=async_delete_issue, IssueSeverity=types.SimpleNamespace(ERROR="error", WARNING="warning"),
             IssueRegistry=IssueRegistry)
@@ -486,6 +535,13 @@ def install() -> None:
             SensorDeviceClass=types.SimpleNamespace(ENUM="enum", BATTERY="battery"))
     _module("homeassistant.components.notify", NotifyEntity=NotifyEntity)
     _module("homeassistant.components.event", EventEntity=EventEntity)
+    _module("homeassistant.components.frontend", add_extra_js_url=_add_extra_js_url)
+    _module("homeassistant.components.http", StaticPathConfig=StaticPathConfig)
+    _module("homeassistant.components.websocket_api", websocket_command=_WebsocketApi.websocket_command,
+            async_response=_WebsocketApi.async_response, event_message=_WebsocketApi.event_message,
+            async_register_command=_WebsocketApi.async_register_command, ERR_NOT_FOUND="not_found",
+            ERR_UNAUTHORIZED="unauthorized", ERR_INVALID_FORMAT="invalid_format")
+    sys.modules["homeassistant.components"].websocket_api = sys.modules["homeassistant.components.websocket_api"]
     _module("homeassistant.helpers.entity_platform", async_get_current_platform=lambda: PLATFORM)
     _module("homeassistant.components.select", SelectEntity=SelectEntity)
     _module("homeassistant.helpers.selector", EntitySelector=_Sel, EntitySelectorConfig=_Cfg, SelectSelector=_Sel,

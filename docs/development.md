@@ -10,6 +10,7 @@ npx tsc --noEmit -p . | grep -v node_modules     # prints nothing when clean
 python3 -m unittest discover -s tests -t .       # all Python tests (standard library only)
 python3 scripts/sync_proto.py                    # copy piston_device/proto into the integration
 .venv-ha/bin/python -m pytest tests/ha -q        # tests inside a real Home Assistant (dev venv, see tests/ha/README.md)
+node --test "tests/js/*.test.js"                 # the dashboard card's logic and element (Node 24)
 python3 scripts/check_public.py                  # fail on emails, MACs and private IPs in the tree
 ```
 
@@ -38,6 +39,14 @@ Do not use Valve's or Home Assistant's own artwork.
 ## Conventions
 
 Wording stays hardware agnostic ("device", not a specific model) and nothing hard-codes a screen size. Keep the README entity and action tables in step with the code (a test checks that every entity, action and option name appears).
+
+## Remote card
+
+The card is one hand-written JavaScript file, `custom_components/piston/www/piston-remote-card.js`: no build step and no dependencies, so what is in the repository is what Home Assistant loads. It is served by `card.py`. The pure logic at the top (state table, gestures, wheel, typing, power plan, editor schema) has no DOM and is tested with `node --test "tests/js/*.test.js"`; the element itself is tested against a tiny fake DOM (`tests/js/dom.js`). The test files load the card through `vm` (`tests/js/load.js`) because the repository's `package.json` says `"type": "module"`.
+
+To look at the card in a browser without Home Assistant, `tests/js/harness.html` loads it with a mock `hass` (a fake connection, states and entities): `firefox --headless --screenshot out.png --window-size=390,1000 "file://$PWD/tests/js/harness.html?s=ready"`, where `s` is a status such as `ready`, `device_off` or `desktop` and `mp` the media player state. A browser matters: it caught a start-up error that Node did not.
+
+After changing the card, restart Home Assistant: `card.py` puts the integration version and a fingerprint of the file on the address, so the Home Assistant app loads the new file instead of its cached copy. The real-Home-Assistant tests need the `home-assistant-frontend` package (it is in `tests/ha/requirements.txt`) because the integration depends on the frontend component.
 
 ## Sendspin player
 

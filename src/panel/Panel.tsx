@@ -2,6 +2,7 @@ import { PanelSection } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { MediaCard } from "../media/MediaCard";
 import { AppsSection } from "./AppsSection";
+import { RemoteInputSection } from "./RemoteInputSection";
 import { StatusSection } from "./StatusSection";
 import { WakeOnLanSection } from "./WakeOnLanSection";
 import { usePanelState } from "./usePanelState";
@@ -31,6 +32,7 @@ export function Panel() {
         <AppsSection settings={state.settings} setApps={state.setApps} />
         <WakeOnLanSection />
       </PanelSection>
+      <RemoteInputSection status={state.status} setRemoteInput={state.setRemoteInput} />
     </>
   );
 }

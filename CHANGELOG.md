@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.8.0
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3 and adds one frame, so an older plugin keeps working for everything else, but the remote card needs this plugin.
+
+### Added
+- **A remote card for your dashboard.** The new **Piston remote** card, shipped with the integration (no resource to add), gives you a touchpad, an arrow wheel, Steam menu, Quick Access and Back buttons, the phone keyboard, volume (a slider with system volume, buttons with HDMI CEC), a power button and an app picker for the device, from the Home Assistant app on your phone, anywhere Home Assistant is reachable. A cursor is drawn on the device's screen above menus and games. Turning the device off always asks first; turning it on sends Wake on LAN. The card follows your Home Assistant theme, and three sliders in its editor (touchpad height and two gaps) fit it to your screen. See the [reference](https://github.com/White-Goblin/piston/blob/main/docs/reference.md#remote-card).
+- **Remote input is for administrators.** The card can type on the device, so only Home Assistant administrators may use it unless you turn on the new option **Remote input for all users**. The Piston panel on the device has an **Allow remote input** switch (on by default) that makes the device ignore the card.
+- The device reports whether it can take remote input and why not (the card shows it): off on the device, the virtual input devices could not be created, desktop mode, and so on.
+
+### Notes
+- This supersedes the separate Remote Control plugin: remove it from the device, since both would draw a cursor.
+- Only ASCII can be typed. On an iPhone a two-finger sideways drag switches dashboard tabs and the card cannot prevent it: use a dashboard with a single view.
+- The integration now depends on Home Assistant's `frontend`, `http` and `websocket_api` components (always present).
+
 ## 0.7.0
 
 **Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3 and changes nothing in Home Assistant itself.

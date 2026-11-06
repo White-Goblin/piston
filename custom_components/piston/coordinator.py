@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from .client import CommandError, DeckyClient, DeviceOffline, VersionSkew
-from . import update_logic
+from . import input_status as input_logic, update_logic
 from .const import CONF_MAC, CONF_NAME, DEFAULT_OPTIONS, OPT_SENSOR_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -52,6 +52,8 @@ class DeckyCoordinator:
         self._off_handle: asyncio.TimerHandle | None = None
         self._listeners: list[Callable[[], None]] = []
         self._event_listeners: dict[str, list[Callable[[dict], None]]] = {}
+        self._input_listeners: list[Callable[[str], None]] = []
+        self._last_input_status: str | None = None
         self._persist_mac = persist_mac
         # Plugin self-update (see update_logic.py): the integration's version is the version the plugin should run
         self.target_version = target_version
@@ -89,6 +91,37 @@ class DeckyCoordinator:
     def _notify(self) -> None:
         for callback in list(self._listeners):
             callback()
+        self._notify_input()
+
+    # --- remote input (the card) ---------------------------------------------
+
+    @property
+    def input_capability(self) -> str:
+        """`unsupported`, `disabled` or `enabled`, from the `input` field of the device group."""
+        return input_logic.capability(self.groups.get("device"))
+
+    @property
+    def input_status(self) -> str:
+        """What the remote card may do now (see input_status.py): ready, device_off, unreachable, desktop, no_capability,
+        disabled or skew."""
+        return input_logic.input_status(
+            power=self.power, connected=self.connected, sleeping=self.sleeping, skewed=self.skewed,
+            problem=self.problem, device_group=self.groups.get("device"))
+
+    def async_add_input_listener(self, callback: Callable[[str], None]) -> Callable[[], None]:
+        """Call `callback(status)` whenever the input status changes (not on every state push)."""
+        if self._last_input_status is None:
+            self._last_input_status = self.input_status  # listeners hear changes, not the status they already know
+        self._input_listeners.append(callback)
+        return lambda: self._input_listeners.remove(callback) if callback in self._input_listeners else None
+
+    def _notify_input(self) -> None:
+        status = self.input_status
+        if status == self._last_input_status:
+            return
+        self._last_input_status = status
+        for callback in list(self._input_listeners):
+            callback(status)
 
     # --- input from the client ----------------------------------------------
 

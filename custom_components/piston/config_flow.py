@@ -14,7 +14,7 @@ from ._compat import vol
 from .client import ConnectionClosed, PairingError, pair, probe
 from .const import (
     CONF_DEVICE_ID, CONF_HOST, CONF_NAME, CONF_PORT, CONF_SECRET, DEFAULT_OPTIONS, DEFAULT_PORT, DOMAIN,
-    OPT_PIP_CAMERAS, OPT_PIP_DURATION, OPT_PIP_MUTE, OPT_PIP_POSITION, OPT_PIP_SIZE, OPT_SENSOR_INTERVAL, OPT_TURN_OFF,
+    OPT_ALLOW_ALL_USERS, OPT_PIP_CAMERAS, OPT_PIP_DURATION, OPT_PIP_MUTE, OPT_PIP_POSITION, OPT_PIP_SIZE, OPT_SENSOR_INTERVAL, OPT_TURN_OFF,
     PIP_DURATIONS, PIP_POSITIONS, PIP_SIZES, SENSOR_INTERVALS, TURN_OFF_MODES,
 )
 
@@ -178,5 +178,6 @@ class DeckyOptionsFlow(OptionsFlow):
             vol.Required(OPT_PIP_SIZE, default=current[OPT_PIP_SIZE]): choice(PIP_SIZES, "pip_size"),
             vol.Required(OPT_PIP_DURATION, default=str(current[OPT_PIP_DURATION])): choice(PIP_DURATIONS, "pip_duration"),
             vol.Required(OPT_PIP_MUTE, default=current[OPT_PIP_MUTE]): bool,
+            vol.Required(OPT_ALLOW_ALL_USERS, default=current[OPT_ALLOW_ALL_USERS]): bool,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -6,6 +6,7 @@ from unittest import mock
 from . import use_temp_settings_dir
 from piston_device import state as state_module
 from piston_device.controllers import ControllersMixin
+from piston_device.input import InputMixin
 from piston_device.proto import PROTOCOL_VERSION, sensors as sensor_table
 from piston_device.sensors import SensorsMixin
 from piston_device.settings import SettingsMixin
@@ -23,9 +24,10 @@ class FakeServer:
         self.events.append((name, data))
 
 
-class Host(SettingsMixin, StateMixin, SensorsMixin, ControllersMixin):
+class Host(SettingsMixin, StateMixin, SensorsMixin, ControllersMixin, InputMixin):
     def __init__(self):
         self._init_state()
+        self._init_input()
         self.controller_state, self.os_controllers, self.readings = {}, {}, None
         self.sensor_wake = asyncio.Event()
         self.sensor_values, self.cpu_prev = {}, None

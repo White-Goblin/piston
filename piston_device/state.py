@@ -129,6 +129,7 @@ class StateMixin:
             "device_id": s["device_id"], "name": s["device_name"], "protocol": PROTOCOL_VERSION, "session": self.session,
             "mac": wol.get("mac", ""), "broadcast": wol.get("broadcast", "255.255.255.255"),
             "wol": {k: wol[k] for k in ("interface", "kind", "supported", "wol_enabled", "warnings", "error") if k in wol},
+            "input": self._input_field(),
         }
 
     async def _refresh_wol(self) -> None:

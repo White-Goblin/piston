@@ -212,7 +212,7 @@ class StreamTests(SessionTestCase):
         h = await self.harness()
         await self.play(h, n=1)
         await h.peer.send("stream/start", {"server_transmitted": h.peer.server_now(), "player": {**FMT48, "sample_rate": 44100}})
-        await h.wait_for(lambda: [e for e in h.sink.events if e[0] == "open"][-1][1] == 44100)
+        await h.wait_for(lambda: [e[1] for e in h.sink.events if e[0] == "open"][-1:] == [44100])  # empty until the sink reopens
         self.assertTrue(h.sessions[0].streaming)
         self.assertEqual(h.sessions[0].scheduler.rate, 44100)
 

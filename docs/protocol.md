@@ -17,6 +17,7 @@ All frames are JSON text, at most 1 MB.
 | `event` `{name, data}` | device to HA | A one-off event |
 | `update` `{version, url, sha256}` | HA to device | Install this plugin release (see [Updating the plugin](#updating-the-plugin)) |
 | `update_status` `{state, version, reason?}` | device to HA | Progress or failure of an update |
+| `input` `{seq, events}` | HA to device | Remote input for the card: pointer and keyboard events (see [Remote input](#remote-input)). Fire and forget: the device never answers it |
 
 Close codes: 4000 version skew, 4001 replaced by a newer connection, 4002 unauthorized, 4003 bad request. The device keeps one authenticated connection; a new one replaces the old.
 
@@ -69,6 +70,32 @@ When a connection ends the integration keeps trying to reconnect: every 5 second
 ## Picture-in-picture signalling
 
 The player page runs in a Steam browser view and holds no Home Assistant credential. It long-polls the plugin on loopback (`/pip/events`, `/pip/send`, protected by a per-run nonce); the plugin forwards its messages to the integration as `pip_signal` events and queues the integration's `pip_signal` commands for it. The integration calls the camera entity's WebRTC handlers (offer, candidates) or builds an HLS stream URL. The video itself flows directly between Home Assistant and the device.
+
+## Remote input
+
+From release 0.8.0 the integration forwards the dashboard card's input to the device in `input` frames. The protocol version stays 3: the frame is additive, the frozen `hello` is unchanged, and a device that does not know it simply does not report the capability below, so the integration never sends it.
+
+```
+{"type":"input","seq":<int>,"events":[ <event>, ... ]}          no reply frame exists for it
+event = {"k":"move","dx":<number>,"dy":<number>}                 finger travel in CSS pixels, summed per frame by the card
+      | {"k":"scroll","dx":<int>,"dy":<int>}                     wheel notches
+      | {"k":"click","b":"l"|"r"}
+      | {"k":"key","key":"Enter|Backspace|Escape|Tab|Up|Down|Left|Right|Home|End|PageUp|PageDown|Delete|Space"}
+      | {"k":"text","s":"<text>"}                                ASCII is typed, anything else is dropped
+      | {"k":"action","a":"steam"|"qam"}                         open or close the Steam menu / Quick Access
+      | {"k":"release"}                                          let go of everything held and hide the cursor
+```
+
+Limits: at most 64 events per frame, `text.s` at most 256 characters, `dx`/`dy` finite and within 2000. A frame that breaks them is dropped (debug log) without closing the connection. The device accepts at most 120 frames per second per connection: above that, moves and scrolls are summed and delivered a moment later, while clicks, keys, text and actions are never dropped and stay in order. The integration writes frames straight to the socket (not behind awaited commands) and, while the socket is slow, sums adjacent moves; an `input` frame from a peer that only has the update lane is refused with `version_skew`.
+
+**Capability.** The `device` state group carries `input: {enabled: bool, error?: text}`. It is absent on a plugin that predates remote input; `enabled` mirrors the device's **Allow remote input** setting; `error` is set while remote input is on but the virtual input devices could not be created.
+
+**Home Assistant side.** The card never reaches the device. Two websocket commands of the integration serve it, both for administrators unless the option "allow all users" is on (checked on every call):
+
+| Command | Data | Behavior |
+|---|---|---|
+| `piston/input/subscribe` | `device_id` (a Home Assistant device id or the Piston device id) | Streams `{status}`, starting with the current one: `ready`, `device_off`, `unreachable`, `desktop`, `no_capability`, `disabled`, `error`, `skew`. Ending the subscription (or the websocket) sends `release` to the device |
+| `piston/input/send` | `device_id`, `events` | Validates the events and forwards one `input` frame. A good call gets no reply; a bad one gets `invalid_format`, `unauthorized` or `not_found` |
 
 ## Sendspin player
 

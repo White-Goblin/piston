@@ -38,6 +38,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: python -m unittest discover -s tests -t .
+      - run: node --test "tests/js/*.test.js"
       - run: python scripts/package_plugin.py out
       - name: Create the release with the plugin zip
         env:

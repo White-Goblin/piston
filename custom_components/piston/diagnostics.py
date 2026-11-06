@@ -70,6 +70,10 @@ async def async_get_config_entry_diagnostics(hass, entry) -> dict[str, Any]:
         },
         "client": {"probe_mode": getattr(client, "probe_mode", None), "failed_attempts": getattr(client, "failed_attempts", None),
                    "boot_id": getattr(client, "boot_id", None)},
+        "input": {
+            "capability": coordinator.input_capability, "status": coordinator.input_status,
+            "frames_written": getattr(client, "input_frames", None), "events_dropped": getattr(client, "input_dropped", None),
+        },
         "update": {
             "plugin_version": coordinator.plugin_version, "target_version": coordinator.target_version,
             "auto_update": coordinator.auto_update, "state": coordinator.update_state, "skewed": coordinator.skewed,

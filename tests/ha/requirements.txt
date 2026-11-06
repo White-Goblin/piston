@@ -4,3 +4,5 @@ pytest-homeassistant-custom-component==0.13.375
 pytest-cov
 # Home Assistant's camera component (the PiP relay's real helper defaults load it) declares this requirement
 PyTurboJPEG==1.8.3
+# The `frontend` component is a dependency of the integration (it serves the remote card); this is the version Home Assistant 2026.10.4 declares
+home-assistant-frontend==20260930.5

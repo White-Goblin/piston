@@ -28,8 +28,11 @@ class HttpServerMixin:
         )
         return head.encode() + body
 
-    def _json_response(self, status: str, data: dict) -> bytes:
-        return self._http_response(status, "application/json", json.dumps(data).encode())
+    def _json_response(self, status: str, data: dict, cors: bool = False) -> bytes:
+        response = self._http_response(status, "application/json", json.dumps(data).encode())
+        if cors:  # the cursor page is an inline data: page, so its origin is not this server's
+            response = response.replace(b"Connection: close\r\n", b"Access-Control-Allow-Origin: *\r\nConnection: close\r\n", 1)
+        return response
 
     async def _handle_request(self, method: str, target: str, body: bytes = b"") -> bytes:
         url = urlsplit(target)
@@ -43,9 +46,27 @@ class HttpServerMixin:
                 return self._http_response("404 Not Found", text, b"not found")
         if url.path in ("/pip/events", "/pip/send"):
             return await self._handle_pip_request(method, url, body)
+        if url.path == "/cursor/events":
+            return await self._handle_cursor_request(method, url)
         if url.path == "/sendspin/cover":
             return self._handle_cover_request(method, url)
         return self._http_response("404 Not Found", text, b"not found")
+
+    async def _handle_cursor_request(self, method: str, url) -> bytes:
+        """Long-poll for the cursor overlay: the pointer positions since `after`; protected by the per-run nonce."""
+        query = parse_qs(url.query)
+        if not secrets.compare_digest(query.get("nonce", [""])[0], self.nonce):
+            return self._http_response("403 Forbidden", "text/plain", b"bad nonce")
+        if method != "GET":
+            return self._http_response("405 Method Not Allowed", "text/plain", b"")
+        feed = getattr(self, "cursor_feed", None)
+        if feed is None:
+            return self._http_response("404 Not Found", "text/plain", b"not found")
+        try:
+            after = int(query.get("after", ["0"])[0])
+        except ValueError:
+            return self._http_response("400 Bad Request", "text/plain", b"bad after")
+        return self._json_response("200 OK", await feed.poll(max(after, 0)), cors=True)
 
     def _handle_cover_request(self, method: str, url) -> bytes:
         """The current Sendspin cover for the media card; protected by the per-run nonce, and only the current id is served."""

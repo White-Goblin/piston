@@ -527,3 +527,111 @@ class LaneTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(c.VersionSkew) as cm:
             await c.open_session(self.transport, "127.0.0.1", self.port, "dev123", self.SECRET, own=(9, 9))
         self.assertTrue(cm.exception.updatable)
+
+
+class InputOutboxTests(unittest.TestCase):
+    def test_adjacent_moves_and_scrolls_are_summed(self):
+        box = c.InputOutbox()
+        box.add([{"k": "move", "dx": 1, "dy": 2}, {"k": "move", "dx": 3, "dy": -1}, {"k": "scroll", "dx": 0, "dy": 1},
+                 {"k": "scroll", "dx": 1, "dy": 1}])
+        self.assertEqual(box.take(), [{"k": "move", "dx": 4, "dy": 1}, {"k": "scroll", "dx": 1, "dy": 2}])
+
+    def test_order_around_clicks_is_kept(self):
+        box = c.InputOutbox()
+        box.add([{"k": "move", "dx": 1, "dy": 0}, {"k": "click", "b": "l"}, {"k": "move", "dx": 2, "dy": 0}, {"k": "move", "dx": 2, "dy": 0}])
+        self.assertEqual(box.take(), [{"k": "move", "dx": 1, "dy": 0}, {"k": "click", "b": "l"}, {"k": "move", "dx": 4, "dy": 0}])
+
+    def test_the_callers_events_are_not_mutated(self):
+        box = c.InputOutbox()
+        first = {"k": "move", "dx": 1, "dy": 0}
+        box.add([first])
+        box.add([{"k": "move", "dx": 1, "dy": 0}])
+        self.assertEqual(first["dx"], 1)
+
+    def test_take_respects_the_frame_limit(self):
+        box = c.InputOutbox()
+        box.add([{"k": "key", "key": "Enter"}] * 70)
+        self.assertEqual(len(box.take()), m.MAX_INPUT_EVENTS)
+        self.assertEqual(len(box), 70 - m.MAX_INPUT_EVENTS)
+
+    def test_a_flood_sheds_the_oldest_moves_but_never_a_click_or_key(self):
+        box = c.InputOutbox(max_pending=10)
+        events = []
+        for i in range(30):
+            events += [{"k": "move", "dx": 1, "dy": 0}, {"k": "key", "key": "Enter"}] if i % 2 else [{"k": "click", "b": "l"}, {"k": "scroll", "dx": 0, "dy": 1}]
+        box.add(events)
+        kept = box.take(1000)
+        self.assertEqual(sum(e["k"] in ("click", "key") for e in kept), 30)
+        self.assertGreater(box.dropped, 0)
+
+
+class InputWriteTests(unittest.IsolatedAsyncioTestCase):
+    """Remote input over a real device server and the stdlib transport."""
+
+    SECRET = SessionTests.SECRET
+    make = SessionTests.make
+
+    async def asyncSetUp(self):
+        await SessionTests.asyncSetUp(self)
+        self.received = []
+        self.dev.server.on_input = self.received.append
+
+    async def wait_for(self, predicate):
+        for _ in range(200):
+            if predicate():
+                return
+            await asyncio.sleep(0.01)
+        self.fail("timed out")
+
+    async def test_not_connected_queues_nothing(self):
+        client = self.make()
+        self.assertFalse(client.write_input([{"k": "release"}]))
+        self.assertFalse(client.send_release())
+
+    async def test_frames_arrive_in_order_with_a_fast_transport(self):
+        client = self.make()
+        await client.start()
+        await asyncio.wait_for(self.connected.wait(), 3)
+        self.assertTrue(client.write_input([{"k": "click", "b": "l"}]))
+        self.assertTrue(client.write_input([{"k": "key", "key": "Enter"}]))
+        self.assertTrue(client.send_release())
+        await self.wait_for(lambda: sum(len(b) for b in self.received) == 3)
+        self.assertEqual([e["k"] for b in self.received for e in b], ["click", "key", "release"])
+
+    async def test_input_is_not_queued_behind_a_pending_command(self):
+        client = self.make()
+        await client.start()
+        await asyncio.wait_for(self.connected.wait(), 3)
+        slow = asyncio.create_task(client.command("echo", {"a": 1}))
+        client.write_input([{"k": "click", "b": "r"}])
+        await self.wait_for(lambda: self.received)
+        await slow
+
+    async def test_with_a_slow_transport_a_thousand_moves_make_bounded_writes_and_keep_every_click(self):
+        client = self.make()
+        await client.start()
+        await asyncio.wait_for(self.connected.wait(), 3)
+        real_send = client._conn.send
+        writes = []
+
+        async def slow_send(text):
+            writes.append(text)
+            await asyncio.sleep(0.02)
+            await real_send(text)
+
+        client._conn.send = slow_send
+        for i in range(1000):
+            client.write_input([{"k": "move", "dx": 1, "dy": 0}])
+            if i % 100 == 0:
+                client.write_input([{"k": "click", "b": "l"}])
+            await asyncio.sleep(0)
+        await self.wait_for(lambda: sum(e["k"] == "click" for b in self.received for e in b) == 10)
+        await self.wait_for(lambda: sum(e["dx"] for b in self.received for e in b if e["k"] == "move") == 1000)
+        self.assertLess(len(writes), 200)
+
+    async def test_a_new_session_starts_with_an_empty_outbox_and_sequence_zero(self):
+        client = self.make()
+        client._outbox.add([{"k": "move", "dx": 1, "dy": 0}])
+        client._input_seq = 9
+        client._reset_input()
+        self.assertEqual((len(client._outbox), client._input_seq), (0, 0))

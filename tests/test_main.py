@@ -48,6 +48,37 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sent, [("going_to_sleep", {"reason": "suspend"}), ("shutting_down", {"reason": "restart"})])
         self.assertEqual(len(flushed), 2)                      # each was flushed before returning
 
+    async def test_remote_input_is_wired_to_the_server_the_link_and_the_unload(self):
+        self.assertEqual(self.plugin.server.on_input, self.plugin._on_input)
+        self.assertTrue((await self.plugin.get_status())["remote_input"])
+        self.assertEqual((await self.plugin._device_group())["input"], {"enabled": True})
+        calls = []
+        self.plugin._input_release = lambda: calls.append("release")
+        self.plugin._on_link(False)
+        self.assertEqual(calls, ["release"])                     # the link went away: let go of everything
+        self.plugin._on_link(True)
+        self.assertEqual(calls, ["release"])
+        self.plugin._input_abort = lambda: calls.append("abort")
+        self.plugin._unload_now()
+        self.assertIn("abort", calls)                            # unload closes the virtual devices, synchronously
+
+    async def test_the_remote_input_choice_shows_in_the_status_and_survives_a_restart(self):
+        status = await self.plugin.get_status()
+        self.assertEqual((status["remote_input"], status["remote_input_error"]), (True, ""))
+        await self.plugin.set_remote_input(False)
+        self.assertFalse((await self.plugin.get_status())["remote_input"])
+        self.assertFalse((await self.plugin.get_settings())["remote_input"])
+        restarted = main.Plugin()
+        restarted._init_input()                                  # what _main does after a restart: read the saved choice
+        self.assertFalse(restarted.remote_input)
+        restarted.input_keys.shutdown(wait=False)
+        self.plugin.input_error = "no uinput"
+        await self.plugin.set_remote_input(True)
+        self.plugin.input_error = "no uinput"
+        self.assertEqual((await self.plugin.get_status())["remote_input_error"], "no uinput")
+        await self.plugin.set_remote_input(False)
+        self.assertEqual((await self.plugin.get_status())["remote_input_error"], "")   # an error is only shown while input is on
+
     async def test_starts_unpaired_with_a_pairing_code(self):
         status = await self.plugin.get_status()
         self.assertFalse(status["paired"])

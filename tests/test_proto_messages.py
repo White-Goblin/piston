@@ -179,3 +179,73 @@ class SendspinShapeTests(unittest.TestCase):
             with self.assertRaises(m.ProtocolError, msg=repr(data)) as cm:
                 m.sendspin_enable_request(data)
             self.assertEqual(cm.exception.code, m.BAD_REQUEST)
+
+
+class InputFrameTests(unittest.TestCase):
+    GOOD = [
+        {"k": "move", "dx": 3.5, "dy": -2},
+        {"k": "scroll", "dx": 0, "dy": 1},
+        {"k": "click", "b": "l"},
+        {"k": "click", "b": "r"},
+        {"k": "key", "key": "Enter"},
+        {"k": "text", "s": "hello"},
+        {"k": "action", "a": "steam"},
+        {"k": "action", "a": "qam"},
+        {"k": "release"},
+    ]
+
+    def test_every_event_kind_validates_and_roundtrips(self):
+        frame = m.parse(m.encode(m.input_frame(7, self.GOOD)))
+        self.assertEqual(frame["type"], "input")
+        self.assertEqual(frame["seq"], 7)
+        self.assertEqual(frame["events"], self.GOOD)
+
+    def test_unknown_fields_are_dropped_and_scroll_defaults(self):
+        out = m.input_events([{"k": "click", "b": "l", "extra": 1}, {"k": "scroll", "dy": 2}])
+        self.assertEqual(out, [{"k": "click", "b": "l"}, {"k": "scroll", "dx": 0, "dy": 2}])
+
+    def test_every_named_key_is_accepted(self):
+        for key in m.INPUT_KEYS:
+            self.assertEqual(m.input_events([{"k": "key", "key": key}]), [{"k": "key", "key": key}])
+
+    def test_each_limit_violation_is_bad_request(self):
+        bad = [
+            "nope", [], [{"k": "release"}] * (m.MAX_INPUT_EVENTS + 1), ["x"], [{}], [{"k": "wat"}],
+            [{"k": "move", "dx": 1}], [{"k": "move", "dx": "1", "dy": 2}], [{"k": "move", "dx": True, "dy": 0}],
+            [{"k": "move", "dx": float("nan"), "dy": 0}], [{"k": "move", "dx": float("inf"), "dy": 0}],
+            [{"k": "move", "dx": m.MAX_INPUT_DELTA + 1, "dy": 0}], [{"k": "scroll", "dx": 1.5, "dy": 0}],
+            [{"k": "click", "b": "m"}], [{"k": "key", "key": "F13"}], [{"k": "key"}],
+            [{"k": "text", "s": ""}], [{"k": "text", "s": "x" * (m.MAX_INPUT_TEXT_LEN + 1)}], [{"k": "text", "s": 5}],
+            [{"k": "action", "a": "quit"}],
+        ]
+        for events in bad:
+            with self.assertRaises(m.ProtocolError, msg=repr(events)) as ctx:
+                m.input_events(events)
+            self.assertEqual(ctx.exception.code, m.BAD_REQUEST)
+
+    def test_limits_are_inclusive(self):
+        m.input_events([{"k": "release"}] * m.MAX_INPUT_EVENTS)
+        m.input_events([{"k": "text", "s": "x" * m.MAX_INPUT_TEXT_LEN}])
+        m.input_events([{"k": "move", "dx": m.MAX_INPUT_DELTA, "dy": -m.MAX_INPUT_DELTA}])
+
+    def test_frame_needs_seq_and_events(self):
+        for text in ('{"type":"input","events":[{"k":"release"}]}', '{"type":"input","seq":-1,"events":[{"k":"release"}]}',
+                     '{"type":"input","seq":1}', '{"type":"input","seq":1,"events":[]}'):
+            with self.assertRaises(m.ProtocolError, msg=text):
+                m.parse(text)
+
+    def test_device_group_input_field(self):
+        self.assertIsNone(m.device_input(None))
+        self.assertEqual(m.device_input({"enabled": False, "x": 1}), {"enabled": False})
+        for bad in ({}, {"enabled": 1}, "on", []):
+            with self.assertRaises(m.ProtocolError):
+                m.device_input(bad)
+
+    def test_device_group_input_error_is_optional_and_bounded(self):
+        self.assertEqual(m.device_input({"enabled": True, "error": "no uinput"}), {"enabled": True, "error": "no uinput"})
+        for bad in ({"enabled": True, "error": 5}, {"enabled": True, "error": "x" * (m.MAX_INPUT_ERROR_LEN + 1)}):
+            with self.assertRaises(m.ProtocolError):
+                m.device_input(bad)
+
+    def test_device_group_without_the_field_still_works(self):
+        self.assertIsNone(m.device_input({"session": "game"}.get("input")))

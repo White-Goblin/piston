@@ -5,13 +5,18 @@
     "@White-Goblin"
   ],
   "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "websocket_api"
+  ],
   "documentation": "https://github.com/White-Goblin/piston",
   "integration_type": "device",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/White-Goblin/piston/issues",
   "quality_scale": "silver",
   "requirements": [],
-  "version": "0.7.0",
+  "version": "0.8.0",
   "zeroconf": [
     "_piston._tcp.local."
   ]

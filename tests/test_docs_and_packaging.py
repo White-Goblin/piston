@@ -37,6 +37,22 @@ class DocsMatchTheCode(unittest.TestCase):
         for label in json.loads(read("custom_components", "piston", "translations", "en.json"))["options"]["step"]["init"]["data"].values():
             self.assertIn(label, readme, f"option {label!r} is not in the README")
 
+    def test_the_remote_card_docs_name_its_commands_statuses_events_and_config_keys(self):
+        from custom_components.piston import input_api, input_status
+        from piston_device.proto import messages
+        reference, protocol = read("docs", "reference.md"), read("docs", "protocol.md")
+        for name in (input_api.SUBSCRIBE, input_api.SEND):
+            self.assertIn(name, protocol)
+        for status in input_status.STATUSES:
+            self.assertIn(f"`{status}`", protocol, f"status {status} is not in protocol.md")
+        for key in ("device_id", "speed", "show_power", "show_apps", "show_volume", "show_keyboard"):
+            self.assertIn(f"`{key}`", reference, f"card key {key} is not in the reference")
+        for key in messages.INPUT_KEYS:
+            self.assertIn(key, protocol)
+        for kind in ("move", "scroll", "click", "key", "text", "action", "release"):
+            self.assertIn(f'"k":"{kind}"', protocol.replace(" ", ""), f"event {kind} is not in protocol.md")
+        self.assertIn("piston-remote-card", read("README.md"))
+
     def test_readme_names_the_port_and_service_type(self):
         from custom_components.piston.const import DEFAULT_PORT, SERVICE_TYPE
         text = readme_and_reference() + read("docs", "protocol.md")

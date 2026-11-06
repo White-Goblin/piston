@@ -74,7 +74,8 @@
           "pip_position": "PiP position",
           "pip_size": "PiP size",
           "pip_duration": "PiP hide after",
-          "pip_mute": "Mute PiP"
+          "pip_mute": "Mute PiP",
+          "allow_all_users": "Remote input for all users"
         },
         "data_description": {
           "turn_off": "Sleep (suspend) can be woken again with Wake on LAN. Shutdown needs the power button on most devices.",
@@ -83,7 +84,8 @@
           "pip_position": "Where the camera picture appears on the device screen by default.",
           "pip_size": "How large the camera picture is by default.",
           "pip_duration": "How long the camera picture stays before it hides itself by default. The show_pip action can override this.",
-          "pip_mute": "Start camera pictures without sound by default."
+          "pip_mute": "Start camera pictures without sound by default.",
+          "allow_all_users": "The remote card moves the pointer and types on the device. By default only administrators can use it; turn this on to let every user."
         }
       }
     }

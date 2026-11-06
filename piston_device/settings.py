@@ -51,6 +51,7 @@ def default_settings() -> dict:
         "apps": [],
         "controllers_seen": [],
         "sensor_interval": 10,
+        "remote_input": True,  # Home Assistant may move the pointer and type (the remote card); see swe/specs/architecture/device-input-backend.md
         # Sendspin background player (see swe/specs/features/sendspin-player.md)
         "sendspin_enabled": True,
         "sendspin_name": "",  # empty = "<device name> audio"
@@ -114,6 +115,8 @@ class SettingsMixin:
         defaults = default_settings()
         stored = self._read_stored()
         settings = clean_sendspin({k: stored.get(k, v) for k, v in defaults.items()})
+        if not isinstance(settings["remote_input"], bool):
+            settings["remote_input"] = True
         if not re.fullmatch(r"[a-z0-9]{12}", str(settings["device_id"])):
             settings["device_id"] = secrets.token_hex(6)
             write_json_atomic(self._settings_path(), settings)

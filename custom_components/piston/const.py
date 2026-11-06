@@ -30,11 +30,12 @@ OPT_PIP_POSITION = "pip_position"
 OPT_PIP_SIZE = "pip_size"
 OPT_PIP_DURATION = "pip_duration"  # seconds, 0 = until hidden
 OPT_PIP_MUTE = "pip_mute"
+OPT_ALLOW_ALL_USERS = "allow_all_users"  # remote input (the card) for every user, not only administrators
 PIP_POSITIONS = ("top", "top-right", "right", "bottom-right", "bottom", "bottom-left", "left", "top-left")
 # Size is the width of a 16:9 box as a fraction of the screen width
 PIP_SIZES = {"small": 0.25, "medium": 0.4, "large": 0.55, "extra_large": 0.7}
 PIP_DURATIONS = (10, 20, 30, 60, 300, 0)
 DEFAULT_OPTIONS = {
     OPT_TURN_OFF: "sleep", OPT_SENSOR_INTERVAL: 10, OPT_PIP_CAMERAS: [], OPT_PIP_POSITION: "top-right",
-    OPT_PIP_SIZE: "medium", OPT_PIP_DURATION: 30, OPT_PIP_MUTE: True,
+    OPT_PIP_SIZE: "medium", OPT_PIP_DURATION: 30, OPT_PIP_MUTE: True, OPT_ALLOW_ALL_USERS: False,
 }

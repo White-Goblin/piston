@@ -32,6 +32,19 @@ Not every app works with the media player controls. Play, pause, next, previous 
 | Toast (notify), Toast click (event) | Show a Steam notification and report when it is clicked |
 | Sendspin player (switch), Sendspin status (sensor) | Let Music Assistant play audio on the device in the background, mixed with games and apps. Any computer on the same network can connect to the Sendspin player; turn the switch off if that is a concern |
 | PiP camera (select), PiP state (sensor) | Show a camera over whatever is on screen, including a running game |
+| Piston remote (dashboard card) | A touchpad, arrow wheel, Steam menu and Quick Access buttons, typing, volume, a confirmed power button and an app picker for the device, from the Home Assistant app on your phone. See [Remote card](#remote-card) |
+
+## Remote card
+
+From version 0.8.0 Piston adds a dashboard card, **Piston remote**, that turns your phone (or any dashboard) into a touchpad and keyboard for the device. It is part of the integration: there is no resource to add by hand.
+
+- **Add it:** edit a dashboard, choose Add card, pick **Piston remote** and choose the device. In YAML: `type: custom:piston-remote-card` with `device_id` (the card editor sets it for you).
+- **What it has:** a touchpad (drag to move, tap to click, two fingers to right-click, two fingers to scroll or flick), an arrow wheel with Enter (hold to repeat, spin your thumb around it to scroll), Steam menu, Quick Access and Back buttons, the phone keyboard for typing, volume (a slider when the device uses system volume, down, mute and up buttons for HDMI CEC), a power button and an app picker. A cursor is drawn on the device's screen, above menus and games, while you use it.
+- **Power and apps:** when the device is off the power button wakes it with Wake on LAN. When it is on, turning it off always asks first. The app picker lists Steam and the apps you added under *Apps in Home Assistant* in the Piston panel on the device (add them there, or the list only has Steam); choosing Steam closes the running app.
+- **Who can use it:** only Home Assistant administrators, because the card can type on the device. Turn on **Remote input for all users** in the integration's options to allow everyone. The device also has its own switch, **Allow remote input**, in the Piston panel (on by default); turned off, the device ignores the card.
+- **Fit it to your screen:** in the card editor, three sliders set the touchpad height and the empty space above and below the volume control, so a card in a panel (single card) view can fill the phone's screen.
+- **Tips:** on an iPhone a two-finger sideways drag also switches dashboard tabs and a card cannot stop that, so give the card a dashboard with a single view. Only plain keyboard characters can be typed (no accents or emoji).
+- **Replaces the standalone Remote Control plugin.** Remove that plugin from the device: both would draw a cursor.
 
 ## Install
 
@@ -56,6 +69,7 @@ Settings > Devices & services > Piston > Configure:
 | PiP size | Medium | Small, medium, large or extra large. |
 | PiP hide after | 30 seconds | 10, 20, 30, 60 or 300 seconds, or until hidden. |
 | Mute PiP | On | Start camera pictures without sound. |
+| Remote input for all users | Off | The remote card moves the pointer and types on the device. By default only Home Assistant administrators can use it; turn this on to let every user. |
 
 ## Updating
 

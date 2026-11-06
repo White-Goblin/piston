@@ -1,4 +1,5 @@
 import { addEventListener, callable, removeEventListener } from "@decky/api";
+import { Navigation, Router } from "@decky/ui";
 
 // Steam client globals available in the plugin's SharedJSContext
 declare const SteamClient: any;
@@ -114,6 +115,25 @@ const onApp = (command: { action: "launch" | "quit"; appid?: string }) => {
   }
 };
 
+// Side menus, as numbered by Steam's MenuStore
+const MENU_MAIN = 1;
+const MENU_QUICK_ACCESS = 2;
+
+// The remote card's Steam menu and Quick Access tiles act like the physical buttons: open the menu, or close it when it is
+// already the one showing.
+const onRemoteAction = ({ action }: { action: string }) => {
+  try {
+    const menu = action === "steam" ? MENU_MAIN : action === "qam" ? MENU_QUICK_ACCESS : 0;
+    if (!menu) return;
+    const open = (Router as any).WindowStore?.GamepadUIMainWindowInstance?.MenuStore?.GetOpenSideMenu?.();
+    if (open === menu) Navigation.CloseSideMenus();
+    else if (menu === MENU_MAIN) Navigation.OpenMainMenu();
+    else Navigation.OpenQuickAccessMenu();
+  } catch (e) {
+    console.error("Piston: remote action failed", action, e);
+  }
+};
+
 const onPower = ({ action }: { action: string }) => {
   if (action === "suspend") SteamClient.System.SuspendPC();
   else if (action === "restart") SteamClient.System.RestartPC();
@@ -125,6 +145,7 @@ const onPower = ({ action }: { action: string }) => {
 export function registerDeviceControl(): () => void {
   const appListener = addEventListener<[c: { action: "launch" | "quit"; appid?: string }]>("app", onApp);
   const powerListener = addEventListener<[c: { action: string }]>("power", onPower);
+  const remoteActionListener = addEventListener<[c: { action: string }]>("remote_action", onRemoteAction);
 
   // Read what is running now and report it. Returns false when Steam's store is not ready, so the caller
   // can decide (at load: report nothing running; on a resume request: stay silent, the backend asks again).
@@ -193,6 +214,7 @@ export function registerDeviceControl(): () => void {
   return () => {
     removeEventListener("app", appListener);
     removeEventListener("power", powerListener);
+    removeEventListener("remote_action", remoteActionListener);
     removeEventListener("app_sync", syncListener);
     lifetime?.unregister?.();
     focusEvents?.unregister?.();

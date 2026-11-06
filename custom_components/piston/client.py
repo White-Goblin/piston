@@ -235,6 +235,53 @@ async def send_unpair(transport: Transport, host: str, port: int, device_id: str
         await conn.close()
 
 
+INPUT_MAX_PENDING = 256  # events waiting behind a slow socket; beyond this the oldest moves and scrolls are dropped
+
+
+class InputOutbox:
+    """Input events waiting to be written. Adjacent moves (and adjacent scrolls) are summed so a slow socket never builds a
+    backlog of pointer motion; clicks, keys, text, actions and releases keep their order and are never merged or dropped
+    (except a flood of more than INPUT_MAX_PENDING events, where the oldest moves and scrolls go first)."""
+
+    def __init__(self, max_pending: int = INPUT_MAX_PENDING):
+        self._items: list[dict] = []
+        self._max = max_pending
+        self.dropped = 0
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def add(self, events: list[dict]) -> None:
+        for event in events:
+            kind = event["k"]
+            last = self._items[-1] if self._items else None
+            if last is not None and last["k"] == kind and kind in ("move", "scroll"):
+                last["dx"] += event["dx"]
+                last["dy"] += event["dy"]
+            else:
+                self._items.append(dict(event))
+        if len(self._items) > self._max:
+            self._shed()
+
+    def _shed(self) -> None:
+        keep = []
+        excess = len(self._items) - self._max
+        for event in self._items:
+            if excess > 0 and event["k"] in ("move", "scroll"):
+                excess -= 1
+                self.dropped += 1
+                continue
+            keep.append(event)
+        self._items = keep
+
+    def take(self, limit: int = m.MAX_INPUT_EVENTS) -> list[dict]:
+        batch, self._items = self._items[:limit], self._items[limit:]
+        return batch
+
+    def clear(self) -> None:
+        self._items = []
+
+
 class DeckyClient:
     """Keeps an authenticated session open, delivers state and events, and runs commands."""
 
@@ -268,6 +315,11 @@ class DeckyClient:
         self._attempting = False
         self._lost_at = self._clock()
         self.failed_attempts = 0          # consecutive failed attempts since the last connection (for diagnostics)
+        self._outbox = InputOutbox()      # remote input waiting for the socket (see write_input)
+        self._input_task: asyncio.Task | None = None
+        self._input_wake = asyncio.Event()
+        self._input_seq = 0
+        self.input_frames = 0             # for diagnostics: frames written / events dropped under backpressure
         self._last_resolve = float("-inf")
 
     @property
@@ -288,6 +340,8 @@ class DeckyClient:
                 pass
         if self._resync_task is not None:
             self._resync_task.cancel()
+        if self._input_task is not None:
+            self._input_task.cancel()
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
@@ -348,6 +402,49 @@ class DeckyClient:
         finally:
             self._pending.pop(msg_id, None)
 
+    def write_input(self, events: list[dict]) -> bool:
+        """Queue remote input for the device and return at once (False when not connected: nothing is queued).
+
+        Events must already be validated (`m.input_events`). A separate sender task writes them as `input` frames, so input
+        is never queued behind an awaited command; while the socket is slow, adjacent moves and scrolls are summed."""
+        if self._conn is None or self._stopped:
+            return False
+        self._outbox.add(events)
+        if self._input_task is None or self._input_task.done():
+            self._input_task = asyncio.create_task(self._input_loop())
+        self._input_wake.set()
+        return True
+
+    def send_release(self) -> bool:
+        """Tell the device to let go of every held button and key and hide its cursor."""
+        return self.write_input([{"k": "release"}])
+
+    @property
+    def input_dropped(self) -> int:
+        return self._outbox.dropped
+
+    async def _input_loop(self) -> None:
+        while True:
+            while not len(self._outbox):
+                self._input_wake.clear()
+                await self._input_wake.wait()
+            conn = self._conn
+            if conn is None:
+                self._outbox.clear()
+                continue
+            frame = m.input_frame(self._input_seq, self._outbox.take())
+            self._input_seq += 1
+            try:
+                await conn.send(m.encode(frame))
+                self.input_frames += 1
+            except (ConnectionClosed, OSError):
+                self._outbox.clear()  # the read loop notices the loss; stale pointer motion is worthless anyway
+
+    def _reset_input(self) -> None:
+        """A connection began or ended: stale input must not reach a new session, and the sequence starts again."""
+        self._outbox.clear()
+        self._input_seq = 0
+
     def _fail_pending(self) -> None:
         for future in self._pending.values():
             if not future.done():
@@ -393,6 +490,7 @@ class DeckyClient:
                     delay = PROBE_FAST_SECONDS if self._update_running else VERSION_SKEW_DELAY
                 else:
                     self._conn = conn
+                    self._reset_input()
                     self._boot_id, self._last_seq = None, {}
                     self._on_connection(True)
                     await self._read_loop(conn)
@@ -418,6 +516,7 @@ class DeckyClient:
                 if self._conn is not None:
                     await self._conn.close()
                     self._conn = None
+                    self._reset_input()
                     lost_at = self._lost_at = self._clock()
                     self._on_connection(False)
                 else:

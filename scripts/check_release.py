@@ -1,14 +1,17 @@
-"""Fail unless a release tag is consistent: python3 scripts/check_release.py v0.7.0
+"""Fail unless a release tag is consistent: python3 scripts/check_release.py v0.8.0
 
 HACS takes the version of an integration from the tag of the latest GitHub release, so the tag, the integration
 manifest and package.json must carry the same version, and the CHANGELOG.md must have a section for it (the release
-body, which Home Assistant shows in the update entity). Exits 1 and prints every problem.
+body, which Home Assistant shows in the update entity), and the dashboard card has to be in the integration folder: HACS installs the
+integration from the tagged tree, so a card that is missing (or left out of the commit) would ship a release whose card
+silently does not exist. Exits 1 and prints every problem.
 """
 import json
 import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CARD_PATH = ("custom_components", "piston", "www", "piston-remote-card.js")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from release_notes import section  # noqa: E402
 
@@ -26,6 +29,9 @@ def problems(tag: str, root: str = ROOT) -> list:
         found.append(f"manifest.json version {manifest} is not the tag version {version}")
     if package != version:
         found.append(f"package.json version {package} is not the tag version {version}")
+    card = os.path.join(root, *CARD_PATH)
+    if not os.path.isfile(card) or os.path.getsize(card) == 0:
+        found.append(f"the remote card {'/'.join(CARD_PATH)} is missing or empty")
     with open(os.path.join(root, "CHANGELOG.md"), encoding="utf-8") as f:
         if section(f.read(), version) is None:
             found.append(f"CHANGELOG.md has no section for {version}")

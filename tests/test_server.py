@@ -3,7 +3,7 @@ import unittest
 
 from . import wsclient
 from piston_device.proto import PROTOCOL_VERSION, auth, messages as m
-from piston_device.server import ProtocolServer
+from piston_device.server import InputRateLimiter, ProtocolServer
 
 SECRET = b"k" * 32
 HELLO = {"type": "hello", "proto": PROTOCOL_VERSION, "min_proto": 1, "device_id": "ha"}
@@ -46,12 +46,13 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             return {}
 
         self.events = []
+        self.inputs = []
         self.server = ProtocolServer(
             device_id=lambda: "dev123", secret=lambda: self.box["secret"], pairing=FakePairing(self.box),
             commands={"ok": ok, "bad": bad, "boom": boom, "slow": slow, "launch": launch},
             snapshot=lambda: {"device": {"name": "x"}, "apps": {"running": False}},
             host="127.0.0.1", port=0, ping_interval=0.05, idle_timeout=1, hello_timeout=0.5,
-            on_connection=self.events.append)
+            on_connection=self.events.append, on_input=self.inputs.append)
         await self.server.start()
         self.addAsyncCleanup(self.server.stop)
 
@@ -178,6 +179,14 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got, [frame])
         self.server.push_update_status("installing", "1.2.3")
         self.assertEqual(await c.recv(), m.update_status("installing", "1.2.3"))
+
+    async def test_input_from_a_lane_only_peer_is_not_delivered(self):
+        c = await self.login_skewed(proto=0)
+        await c.recv()
+        await c.send({"type": "input", "seq": 1, "events": [{"k": "release"}]})
+        r = await c.recv()
+        self.assertEqual(r["error"]["code"], m.VERSION_SKEW)
+        self.assertEqual(self.inputs, [])
 
     async def test_a_skewed_peer_with_a_bad_proof_gets_nothing(self):
         got = []
@@ -319,3 +328,103 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
         await c.send({"type": "cmd", "id": 1, "name": "ok"})
         self.assertEqual((await c.recv())["error"]["code"], m.UNAUTHORIZED)
         self.assertEqual(await c.recv(), ("close", 4002))
+
+
+class InputFrameServerTests(ServerTests):
+    """Input frames reach the hook in order, never get a reply and never close the connection."""
+
+    async def wait_for(self, predicate, timeout=1.0):
+        deadline = asyncio.get_running_loop().time() + timeout
+        while not predicate():
+            self.assertLess(asyncio.get_running_loop().time(), deadline, "timed out")
+            await asyncio.sleep(0.005)
+
+    async def test_valid_frames_reach_the_hook_in_order_without_a_reply(self):
+        c = await self.login()
+        for i in range(3):
+            await c.send({"type": "input", "seq": i, "events": [{"k": "click", "b": "l"}, {"k": "key", "key": "Enter"}]})
+        await self.wait_for(lambda: len(self.inputs) == 3)
+        self.assertEqual(self.inputs[0], [{"k": "click", "b": "l"}, {"k": "key", "key": "Enter"}])
+        await c.send({"type": "cmd", "id": 5, "name": "ok", "data": {}})
+        self.assertEqual((await c.recv())["id"], 5)  # the next frame the peer sees is this result: no reply to the input frames
+
+    async def test_an_invalid_input_frame_is_dropped_and_the_connection_stays(self):
+        c = await self.login()
+        await c.send({"type": "input", "seq": 1, "events": [{"k": "move", "dx": 99999, "dy": 0}]})
+        await c.send({"type": "input", "seq": 2, "events": "nope"})
+        await c.send({"type": "input", "seq": 3, "events": [{"k": "release"}]})
+        await self.wait_for(lambda: self.inputs == [[{"k": "release"}]])
+        await c.send({"type": "cmd", "id": 6, "name": "ok", "data": {}})
+        self.assertEqual((await c.recv())["id"], 6)
+
+    async def test_a_failing_hook_does_not_drop_the_connection(self):
+        def boom(events):
+            raise RuntimeError("kaput")
+        self.server.on_input = boom
+        c = await self.login()
+        await c.send({"type": "input", "seq": 1, "events": [{"k": "release"}]})
+        await c.send({"type": "cmd", "id": 7, "name": "ok", "data": {}})
+        self.assertEqual((await c.recv())["id"], 7)
+
+    async def test_summed_moves_over_the_cap_are_flushed_when_there_is_room(self):
+        from unittest import mock
+        self.server._idle_timeout = 10  # the fixture drops idle peers after 1 s, which would end the wait
+        with mock.patch("piston_device.server.INPUT_FRAMES_PER_SECOND", 3):
+            c = await self.login()
+            for i in range(5):
+                await c.send({"type": "input", "seq": i, "events": [{"k": "move", "dx": 1, "dy": 0}]})
+            await self.wait_for(lambda: len(self.inputs) == 3)
+            await self.wait_for(lambda: sum(e["dx"] for batch in self.inputs for e in batch) == 5, timeout=3.0)
+        self.assertEqual(self.inputs[-1], [{"k": "move", "dx": 2.0, "dy": 0.0}])
+
+    async def test_input_without_a_hook_is_ignored(self):
+        self.server.on_input = None
+        c = await self.login()
+        await c.send({"type": "input", "seq": 1, "events": [{"k": "release"}]})
+        await c.send({"type": "cmd", "id": 8, "name": "ok", "data": {}})
+        self.assertEqual((await c.recv())["id"], 8)
+
+
+class InputRateLimiterTests(unittest.TestCase):
+    def setUp(self):
+        self.now = 0.0
+        self.limiter = InputRateLimiter(per_second=3, clock=lambda: self.now)
+
+    MOVE = {"k": "move", "dx": 1.0, "dy": 2.0}
+
+    def test_under_the_cap_everything_passes_unchanged(self):
+        for _ in range(3):
+            self.assertEqual(self.limiter.admit([dict(self.MOVE), {"k": "click", "b": "l"}]), [self.MOVE, {"k": "click", "b": "l"}])
+
+    def test_over_the_cap_moves_and_scrolls_are_summed_but_other_events_pass(self):
+        for _ in range(3):
+            self.limiter.admit([dict(self.MOVE)])
+        out = self.limiter.admit([dict(self.MOVE), {"k": "scroll", "dx": 0, "dy": 1}, {"k": "click", "b": "r"}, {"k": "key", "key": "Enter"}])
+        self.assertEqual(out, [{"k": "click", "b": "r"}, {"k": "key", "key": "Enter"}])
+        self.limiter.admit([dict(self.MOVE), {"k": "scroll", "dx": 1, "dy": 1}])
+        self.assertTrue(self.limiter.has_carry)
+        self.assertEqual(self.limiter.take_carry(), [{"k": "move", "dx": 2.0, "dy": 4.0}, {"k": "scroll", "dx": 1, "dy": 2}])
+        self.assertFalse(self.limiter.has_carry)
+        self.assertEqual(self.limiter.take_carry(), [])
+
+    def test_the_carry_rides_on_the_next_frame_that_fits(self):
+        for _ in range(3):
+            self.limiter.admit([dict(self.MOVE)])
+        self.limiter.admit([dict(self.MOVE)])
+        self.now = 1.5
+        self.assertEqual(self.limiter.admit([{"k": "key", "key": "Enter"}]), [{"k": "move", "dx": 1.0, "dy": 2.0}, {"k": "key", "key": "Enter"}])
+
+    def test_flush_waits_for_room_and_a_burst_of_a_thousand_loses_no_click(self):
+        clicks = 0
+        moved = 0.0
+        for i in range(1000):
+            self.now = i * 0.0005  # 2000 frames per second
+            for event in self.limiter.admit([dict(self.MOVE), {"k": "click", "b": "l"}]):
+                clicks += event["k"] == "click"
+                moved += event["dx"] if event["k"] == "move" else 0
+        self.assertEqual(self.limiter.flush(), None)
+        self.now = 5.0
+        for event in self.limiter.flush():
+            moved += event["dx"]
+        self.assertEqual(clicks, 1000)
+        self.assertEqual(moved, 1000.0)

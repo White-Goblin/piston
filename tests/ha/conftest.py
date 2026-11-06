@@ -41,6 +41,7 @@ class FakeDevice:
         self.box = {"secret": secret}
         self.pairing = PairingManager(lambda: self.box["secret"], lambda s: self.box.update(secret=s))
         self.commands = []
+        self.inputs = []         # every batch of remote input events the device received
         self.fail = {}
         self.delay = {}          # command name -> seconds the device takes before answering
         self.groups = {"device": {"device_id": DEVICE_ID, "name": "Box", "mac": "aa:bb:cc:dd:ee:ff", "broadcast": "10.0.0.255",
@@ -75,7 +76,8 @@ class FakeDevice:
         self.server = ProtocolServer(
             device_id=lambda: DEVICE_ID, secret=lambda: self.box["secret"], pairing=self.pairing,
             commands={**{name: handler(name) for name in COMMANDS}, "unpair": unpair, "get_artwork": get_artwork}, snapshot=lambda: dict(self.groups),
-            hello_extra=lambda: {"name": "Box"}, host="127.0.0.1", port=0, ping_interval=5, idle_timeout=30)
+            hello_extra=lambda: {"name": "Box"}, host="127.0.0.1", port=0, ping_interval=5, idle_timeout=30,
+            on_input=self.inputs.append)
 
     async def start(self):
         await self.server.start()
