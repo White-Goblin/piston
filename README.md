@@ -44,7 +44,6 @@ From version 0.8.0 Piston adds a dashboard card, **Piston remote**, that turns y
 - **Who can use it:** only Home Assistant administrators, because the card can type on the device. Turn on **Remote input for all users** in the integration's options to allow everyone. The device also has its own switch, **Allow remote input**, in the Piston panel (on by default); turned off, the device ignores the card.
 - **Fit it to your screen:** in the card editor, three sliders set the touchpad height and the empty space above and below the volume control, so a card in a panel (single card) view can fill the phone's screen.
 - **Tips:** on an iPhone a two-finger sideways drag also switches dashboard tabs and a card cannot stop that, so give the card a dashboard with a single view. Only plain keyboard characters can be typed (no accents or emoji).
-- **Replaces the standalone Remote Control plugin.** Remove that plugin from the device: both would draw a cursor.
 
 ## Install
 

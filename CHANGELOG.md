@@ -10,7 +10,6 @@
 - The device reports whether it can take remote input and why not (the card shows it): off on the device, the virtual input devices could not be created, desktop mode, and so on.
 
 ### Notes
-- This supersedes the separate Remote Control plugin: remove it from the device, since both would draw a cursor.
 - Only ASCII can be typed. On an iPhone a two-finger sideways drag switches dashboard tabs and the card cannot prevent it: use a dashboard with a single view.
 - The integration now depends on Home Assistant's `frontend`, `http` and `websocket_api` components (always present).
 
