@@ -1,5 +1,16 @@
 # Piston
 
+[![HACS default][hacs-badge]][hacs-url]
+[![Release][release-badge]][release-url]
+![Downloads][downloads-badge]
+[![Tests][tests-badge]][actions-url]
+[![Hassfest][hassfest-badge]][actions-url]
+[![HACS validation][hacs-validation-badge]][actions-url]
+[![License][license-badge]][license-url]
+![Home Assistant 2026.10+][ha-badge]
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=White-Goblin&repository=piston&category=integration)
+
 **Media and control for SteamOS devices in your living room.** Piston pushes commands from Home Assistant to the box under the TV: launch an app, press play, wake it, put it to sleep, show a camera on screen. The SteamOS device can also be a background speaker for Music Assistant, with a now-playing card on its own screen.
 
 The goal of Piston is to turn a SteamOS device into a fully featured media center, replacing smart TVs, smart soundbars and smart streaming boxes that are untrustworthy and likely spying on their users.
@@ -112,3 +123,16 @@ Remove the device in Home Assistant, which also resets the plugin's pairing. The
 ## License
 
 BSD-3-Clause, see [LICENSE](LICENSE).
+
+[hacs-url]: https://github.com/hacs/integration
+[hacs-badge]: https://img.shields.io/badge/HACS-default-orange.svg?style=flat-square
+[release-url]: https://github.com/White-Goblin/piston/releases
+[release-badge]: https://img.shields.io/github/v/release/White-Goblin/piston?style=flat-square
+[downloads-badge]: https://img.shields.io/github/downloads/White-Goblin/piston/total?style=flat-square
+[actions-url]: https://github.com/White-Goblin/piston/actions
+[tests-badge]: https://img.shields.io/github/actions/workflow/status/White-Goblin/piston/tests.yml?branch=main&label=tests&style=flat-square
+[hassfest-badge]: https://img.shields.io/github/actions/workflow/status/White-Goblin/piston/hassfest.yml?branch=main&label=hassfest&style=flat-square
+[hacs-validation-badge]: https://img.shields.io/github/actions/workflow/status/White-Goblin/piston/hacs.yml?branch=main&label=HACS%20validation&style=flat-square
+[license-url]: https://github.com/White-Goblin/piston/blob/main/LICENSE
+[license-badge]: https://img.shields.io/github/license/White-Goblin/piston?style=flat-square
+[ha-badge]: https://img.shields.io/badge/Home%20Assistant-2026.10%2B-blue.svg?style=flat-square
