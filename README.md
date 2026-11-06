@@ -6,8 +6,6 @@
 [![HACS validation][hacs-validation-badge]][actions-url]
 [![License][license-badge]][license-url]
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=White-Goblin&repository=piston&category=integration)
-
 **Media and control for SteamOS devices in your living room.** Piston pushes commands from Home Assistant to the box under the TV: launch an app, press play, wake it, put it to sleep, show a camera on screen. The SteamOS device can also be a background speaker for Music Assistant, with a now-playing card on its own screen.
 
 The goal of Piston is to turn a SteamOS device into a fully featured media center, replacing smart TVs, smart soundbars and smart streaming boxes that are untrustworthy and likely spying on their users.
@@ -55,7 +53,10 @@ From version 0.8.0 Piston adds a dashboard card, **Piston remote**, that turns y
 
 ## Install
 
-1. **Integration.** Download Piston from the Home Assistant Marketplace, formerly HACS, then restart Home Assistant.
+1. **Integration.** Download Piston from the Home Assistant Marketplace, formerly HACS, then restart Home Assistant. The button opens Piston in the Marketplace on your Home Assistant instance:
+
+   [![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=White-Goblin&repository=piston&category=integration)
+
 2. **Plugin on the SteamOS device.** This step is best performed on the device using a mouse and keyboard in desktop mode. Download `piston-<version>.zip` from the [releases](https://github.com/White-Goblin/piston/releases). Go back to game mode. In Decky Loader's settings, enable Developer mode, then choose Developer > Install plugin from ZIP and select the file. Decky Loader must already be installed. This is only done by hand once; later updates are handled by Home Assistant.
 3. **Pair.** The device appears in Home Assistant under Settings > Devices & services as a discovered device. Open Quick Access on the device, then Piston; the panel shows a 6-digit code. Enter it in Home Assistant.
 4. **Choose your apps.** In the plugin panel, under Apps in Home Assistant, add the Steam games and non-Steam apps you want as media player sources.
