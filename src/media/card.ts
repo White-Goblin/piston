@@ -1,7 +1,7 @@
 import { addEventListener, callable, removeEventListener } from "@decky/api";
 import { useEffect, useRef, useState } from "react";
 
-/** What the plugin backend sends as the `sendspin_card` event (swe/specs/architecture/sendspin-metadata-controller-artwork.md). */
+/** What the plugin backend sends as the `sendspin_card` event. */
 export interface CardState {
   active: boolean;
   title?: string;

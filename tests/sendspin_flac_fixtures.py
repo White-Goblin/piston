@@ -1,7 +1,7 @@
 """FLAC test fixtures. REAL_*: two real 24-bit, 44.1 kHz chunks (one whole frame of 4608 samples each) and the header
 Music Assistant sent, captured 2026-11-04; the SHA-256 values are of the s32 (24-bit value << 8) output of the reference
 `flac -d`. SINE16: a 16-bit, 48 kHz stereo stream of 3000 samples in three frames, made with the reference encoder."""
-import hashlib, math
+import math
 
 REAL_HEADER = bytes.fromhex("664c61438000002212001200000000006e5a0ac443700000000000000000000000000000000000000000")
 REAL_CHUNKS = [

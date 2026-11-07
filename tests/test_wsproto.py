@@ -1,6 +1,5 @@
 import asyncio
 import os
-import struct
 import unittest
 
 from piston_device import wsproto

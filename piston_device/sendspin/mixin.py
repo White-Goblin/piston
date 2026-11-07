@@ -1,6 +1,6 @@
 """The Sendspin player inside the plugin backend: owns the listener, the mDNS record and the `sendspin` state group.
 
-See swe/specs/features/sendspin-player.md. `_sendspin_start` / `_sendspin_stop` are idempotent and are what the settings
+`_sendspin_start` / `_sendspin_stop` are idempotent and are what the settings
 (enable switch), the plugin start/unload and the sleep/resume handling call."""
 import asyncio
 import time

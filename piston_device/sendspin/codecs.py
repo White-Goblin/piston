@@ -2,7 +2,7 @@
 
 This module holds the loading, the declared signatures, the low-level decode calls, and the self-tests that decide which
 codecs the player may offer. The decoder classes with their limits and sample conversion are `FlacDecoder` and
-`OpusDecoder` (added on top). Measured on the device (swe/notes/sendspin/codec-spike.md): both libraries load inside the
+`OpusDecoder` (added on top). Measured on the device: both libraries load inside the
 Decky backend from /usr/lib and decode at about 0.1-0.2 percent of a core."""
 import ctypes
 import ctypes.util

@@ -80,7 +80,10 @@ class SumsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ul.release_url("0.4.1").endswith("/releases/tag/v0.4.1"))
 
     def test_the_package_script_output_parses(self):
-        import os, sys, tempfile, json
+        import os
+        import sys
+        import tempfile
+        import json
         from . import ROOT
         sys.path.insert(0, os.path.join(ROOT, "scripts"))
         import package_plugin

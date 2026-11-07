@@ -1,7 +1,7 @@
 """X25519 and ChaCha20-Poly1305 through ctypes over the system libcrypto (OpenSSL 3); HMAC and HKDF from the stdlib.
 
-Why: the plugin has no dependencies and Python's standard library has neither primitive; the device's own OpenSSL does
-(swe/notes/sendspin/crypto-decision.md). Everything that touches ctypes is in this module. Keys are plain bytes and are
+Why: the plugin has no dependencies and Python's standard library has neither primitive; the device's own OpenSSL does.
+Everything that touches ctypes is in this module. Keys are plain bytes and are
 never logged. `self_test()` runs the RFC vectors and is the check that the loaded library really works."""
 import ctypes
 import ctypes.util

@@ -1,7 +1,7 @@
 """Wait until the network is usable again after a resume.
 
 After a wake the wired link is cycled and the address comes back only with the DHCP lease (9-14 s on the dev
-device, see swe/notes/push-state/baseline.md). Work that needs the network (re-advertising on mDNS, reading the
+device). Work that needs the network (re-advertising on mDNS, reading the
 interface and Wake on LAN facts, the first live push to Home Assistant) should wait for it instead of failing
 against a down link and retrying much later.
 """

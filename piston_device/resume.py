@@ -1,7 +1,7 @@
 """What happens when the device wakes: re-read the real state, wait for the network, then tell Home Assistant.
 
 Replaces re-sending the cached state (which was stale: a game closed or the audio changed during the suspend). The
-order matters because the wired network needs 9-14 s to come back after a resume (swe/notes/push-state/baseline.md):
+order matters because the wired network needs 9-14 s to come back after a resume:
 
 1. drop anything that cannot survive the suspend (picture-in-picture sessions);
 2. read the local state (session, audio, sensors, controllers) while waiting for the network to return;

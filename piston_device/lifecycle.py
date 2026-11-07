@@ -2,8 +2,8 @@
 
 A hardware power button, the idle timer, Home Assistant and the Steam menu all end in a logind suspend, but only
 the plugin's own `power` command ever reached the plugin, so `going_to_sleep` was missing for the others. Logind
-announces them all with `PrepareForSleep` / `PrepareForShutdown` (measured on the device, see
-swe/notes/push-state/gate-results.md). Decky has no runtime pip and `dbus-monitor` is denied to non-root users,
+announces them all with `PrepareForSleep` / `PrepareForShutdown` (measured on the
+device). Decky has no runtime pip and `dbus-monitor` is denied to non-root users,
 so this uses two system tools as subprocesses:
 
 * `gdbus monitor` for the signals (plain match rules, no monitor privilege);

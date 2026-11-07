@@ -1,7 +1,6 @@
 """Transport for the integration client built on the stdlib test websocket client."""
 import asyncio
 import os
-import struct
 
 from custom_components.piston.client import ConnectionClosed
 from . import wsclient

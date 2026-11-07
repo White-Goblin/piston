@@ -10,7 +10,7 @@ import { setRegistered } from "./tabState";
  * Decky calls `DeckyPluginLoader.tabsHook.render(existingTabs, visible)` on every render of the menu and appends its own tab to
  * Steam's array. We wrap that function and append one more entry afterwards. The entry is NOT marked `decky`, so Decky's own
  * bookkeeping is untouched. `tabsHook.add` must never be used for this: it makes Decky push its tabs again on every render and
- * corrupts the menu (swe/notes/sendspin/qam-tab-spike.md). This depends on Decky internals, so everything is feature-detected
+ * corrupts the menu. This depends on Decky internals, so everything is feature-detected
  * and guarded: when anything is missing the function returns null and the card stays in the Piston panel.
  */
 

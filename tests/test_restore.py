@@ -9,7 +9,7 @@ from homeassistant.helpers.storage import Store
 
 import custom_components.piston as integration
 from custom_components.piston import config_flow
-from custom_components.piston import binary_sensor, media_player, select as select_platform, sensor
+from custom_components.piston import binary_sensor, media_player, sensor
 from custom_components.piston.store import restored_groups, stable_subset
 from .entityutil import make_coordinator
 from .stdlib_transport import StdTransport

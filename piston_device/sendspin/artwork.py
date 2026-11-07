@@ -1,6 +1,6 @@
 """Sendspin artwork channel: put the announce/part messages (binary type 8) back together into one current cover.
 
-Framing (spec, verified with Music Assistant, swe/notes/sendspin/announcement-wire.md § 2):
+Framing (spec, verified with Music Assistant):
   announce  [8][flags 0x02][timestamp int64 us][total_size uint32]   total_size 0 clears the image
   part      [8][flags 0x00][data]                                   at most 65519 bytes
   cancel    [8][flags 0x01]

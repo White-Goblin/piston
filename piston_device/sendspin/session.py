@@ -3,7 +3,7 @@
 Flow (verified against aiosendspin's client): we send `client/init`, the server answers `server/init`, the server sends
 Noise message 1, we answer with message 2; from then on every message is encrypted. `server/hello` -> `client/hello` ->
 `server/activate`; then time-sync bursts, `client/state`, and the stream. A separate playout task feeds the audio sink so a
-slow write never blocks reading. See swe/specs/architecture/sendspin-client.md.
+slow write never blocks reading.
 
 `run()` returns why the session ended. All timing uses injectable clocks so tests need no real audio."""
 import asyncio
@@ -86,7 +86,7 @@ class SendspinSession:
         self._card_dirty = False
         self._decoder = None
         # The audio output is only ever touched by the audio task (`_audio_loop`), never by the task that reads the server's
-        # messages: a hung audio server must not make the player deaf to the server (swe/notes/sendspin/live-results.md, incident).
+        # messages: a hung audio server must not make the player deaf to the server
         self._want_fmt = None       # (rate, channels, bits, generation) the sink should be open for; None = closed
         self._want_gen = 0
         self._sink_fmt = None       # what it is open for now

@@ -5,7 +5,7 @@ from unittest import mock
 from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir
 from piston_device import advertise, resume as resume_module
 from piston_device.proto import messages as m
-from piston_device.sendspin import codecs, crypto, messages as sendspin_messages, mixin as sendspin_mixin
+from piston_device.sendspin import codecs, crypto, mixin as sendspin_mixin
 from piston_device.sendspin.sink import FakeSink
 from tests.sendspin_peer import FakeServer
 import main
