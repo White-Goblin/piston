@@ -1,5 +1,7 @@
 # Development
 
+Where things live: [modules.md](modules.md). Which tests to use, and the test helpers: [testing.md](testing.md). Rejected and accepted decisions: [decisions.md](decisions.md).
+
 Layout: `custom_components/piston/` (the integration), `main.py` and `piston_device/` (plugin backend), `src/` (plugin frontend and the picture-in-picture player), `tests/`, `scripts/`.
 
 ## Build and test
