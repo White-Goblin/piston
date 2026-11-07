@@ -1,0 +1,30 @@
+name: Home Assistant tests
+description: Run tests/ha (the integration inside a real Home Assistant) against the pinned release or the newest one.
+inputs:
+  ha:
+    description: "pinned = the release in tests/ha/requirements.txt (the floor); latest = the newest release, resolved fresh on every run"
+    required: true
+runs:
+  using: composite
+  steps:
+  - uses: actions/setup-python@v5
+    with:
+      python-version: "3.14"
+      cache: pip
+      cache-dependency-path: tests/ha/requirements.txt
+  - name: Install the pinned requirements
+    if: inputs.ha == 'pinned'
+    shell: bash
+    run: pip install -r tests/ha/requirements.txt
+  - name: Install the newest Home Assistant
+    if: inputs.ha == 'latest'
+    run: |
+      # Same packages as tests/ha/requirements.txt with the versions dropped: pytest-homeassistant-custom-component pulls the
+      # matching homeassistant. The frontend package is then set to the version that Home Assistant release declares.
+      sed -E 's/==.*//' tests/ha/requirements.txt | grep -vE '^\s*(#|$)' | grep -v '^home-assistant-frontend' > "$RUNNER_TEMP/latest.txt"
+      pip install --upgrade -r "$RUNNER_TEMP/latest.txt"
+      pip install "$(python -c "import json, pathlib, homeassistant; print(next(r for r in json.loads((pathlib.Path(homeassistant.__file__).parent / 'components/frontend/manifest.json').read_text())['requirements'] if r.startswith('home-assistant-frontend')))")"
+      pip list 2>/dev/null | grep -iE '^(homeassistant|pytest-homeassistant-custom-component|home-assistant-frontend) '
+    shell: bash
+  - shell: bash
+    run: python -m pytest tests/ha -q --cov --cov-config=tests/ha/.coveragerc --cov-fail-under=95

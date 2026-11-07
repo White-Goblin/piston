@@ -9,7 +9,22 @@ permissions:
   actions: read
 
 jobs:
+  ha-tests:
+    # The real Home Assistant suite must pass on the pinned release (the floor) and on the newest one before anything is published.
+    # If the newest release broke the integration, fix it or re-run once it is green; do not tag around it.
+    name: ha-tests (${{ matrix.ha }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ha: [pinned, latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ha-tests
+        with:
+          ha: ${{ matrix.ha }}
   release:
+    needs: ha-tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

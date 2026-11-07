@@ -5,6 +5,7 @@
 3. `python3 scripts/package_plugin.py` writes `out/piston-<version>.zip` (one folder named `Piston`, the layout Decky Loader installs) and `out/SHA256SUMS` (`sha256sum` format), which the integration uses to check the zip before the device installs it.
 4. Tag `v<version>` and create a GitHub release with the zip and `SHA256SUMS` attached (the tag workflow does this; the release body is the `CHANGELOG.md` section from `scripts/release_notes.py <tag>`, which Home Assistant shows in the update entity, so check it reads well: `python3 scripts/release_notes.py v<version>`). HACS installs the integration from the tag; the plugin zip is installed on the device through Decky Loader.
 5. Push the commit and let the HACS and Hassfest workflows finish green **before** tagging (the HACS action is pinned to a commit in `.github/workflows/hacs.yml`; bump it to the current `main` of `hacs/action` first). The release workflow checks both and stops otherwise.
+6. The release workflow also runs the real Home Assistant suite (`tests/ha`) itself, on the pinned release and on the newest one, and publishes only if both pass (`needs: ha-tests`). The newest release is resolved fresh on every run, so a Home Assistant release that broke the integration stops the release: fix the integration (or bump the pin in `tests/ha/requirements.txt` and the Python version together when the newest release is the new floor), then re-run the workflow. Run `tests/ha` against both yourself first (`tests/ha/README.md`) to avoid finding out after tagging.
 
 ## Staying in the HACS default list
 
