@@ -1,5 +1,5 @@
 """Remote input: the pointer, keyboard and Steam-interface actions that Home Assistant's remote card sends as `input` frames
-(see swe/specs/architecture/device-input-backend.md and docs/protocol.md).
+(see docs/protocol.md).
 
 Virtual devices are created on the first accepted event and closed when remote input is switched off, on unload and on
 shutdown. Everything here that has to run at unload is synchronous (Decky starves the event loop after the unload request)."""

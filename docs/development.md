@@ -11,12 +11,21 @@ python3 -m unittest discover -s tests -t .       # all Python tests (standard li
 python3 scripts/sync_proto.py                    # copy piston_device/proto into the integration
 .venv-ha/bin/python -m pytest tests/ha -q        # tests inside a real Home Assistant (dev venv, see tests/ha/README.md)
 node --test "tests/js/*.test.js"                 # the dashboard card's logic and element (Node 24)
-python3 scripts/check_public.py                  # fail on emails, MACs and private IPs in the tree
+python3 scripts/check_public.py                  # fail on emails, MACs, private IPs and retired project names in the tree
+ruff check .                                     # lint (rules in ruff.toml; `pip install ruff==<version in tests.yml>`)
 ```
 
 The integration code is tested against small stand-ins for Home Assistant (`tests/ha_stubs`), so Home Assistant specific behavior is proven by the separate suite in `tests/ha` (a real Home Assistant in a development-only virtualenv, see its README; CI runs it as the `ha-tests` job) and on a real instance. The protocol code in `piston_device/proto/` is stdlib only and shared by both sides; a test fails when the integration's copy differs.
 
 `scripts/check_public.py` also reads an optional git-ignored `.public-check.local` with one regular expression per line for your own identifiers (addresses, hostnames), so they cannot be committed by accident.
+
+## Rules and their guards
+
+`AGENTS.md` lists the project's rules, each with the test or script that guards it; [architecture.md](architecture.md) gives the reasons. Tests worth knowing when one fails:
+- `tests/test_rules_freshness.py`: the guards named in the table exist, the docs name only files that exist, the Current state block of `AGENTS.md` carries the manifest version, and no tracked file mentions the local planning tree.
+- `tests/test_device_imports.py`, `tests/test_abort_everywhere.py`, `tests/test_ui_rules.py`, `tests/test_protocol_additive.py` (with `tests/protocol_snapshot.json`): the device and protocol rules.
+
+Keep lint clean with `ruff check .` (lint only, no formatter; the version is pinned in `.github/workflows/tests.yml`).
 
 ## Try it on a device
 
@@ -38,7 +47,7 @@ Do not use Valve's or Home Assistant's own artwork.
 
 ## Conventions
 
-Wording stays hardware agnostic ("device", not a specific model) and nothing hard-codes a screen size. Keep the README entity and action tables in step with the code (a test checks that every entity, action and option name appears).
+The rules and the tests that guard them are listed in `AGENTS.md` (the rules table); the reasons are in [architecture.md](architecture.md). Wording stays hardware agnostic ("device", not a specific model) and nothing hard-codes a screen size. Keep the README entity and action tables in step with the code (a test checks that every entity, action and option name appears).
 
 ## Remote card
 
@@ -50,6 +59,37 @@ After changing the card, restart Home Assistant: `card.py` puts the integration 
 
 ## Sendspin player
 
-Code in `piston_device/sendspin/`: `crypto.py` (X25519 and ChaCha20-Poly1305 through `ctypes` over the system `libcrypto`, checked with RFC test vectors at start; the plugin has no dependencies), `noise.py` (Noise KKpsk2, checked against transcripts from the `noiseprotocol` package in `tests/sendspin_noise_vectors.py`), `messages.py`, `clock.py` (the specification's time filter), `codecs.py` (FLAC and Opus through `ctypes` over `libFLAC` and `libopus`, each with a start-up self-test; a codec that fails is not offered), `scheduler.py` (queues encoded chunks and decodes them just before they play), `syncfix.py` (the playback sync correction, below), `sink.py` (a `pw-cat` stream), `artwork.py` (reassembles the cover from the artwork messages), `card.py` (the media card state), `session.py`, `listener.py` and `mixin.py` (which also exposes the card to the Steam interface: the `sendspin_card` event, the `get_sendspin_card`, `get_sendspin_card_config`, `sendspin_card_command` and `sendspin_card_volume` callables and the nonce-protected `/sendspin/cover` route). The session never touches the audio output from the task that reads the server's messages: the audio task (`_audio_loop` in `session.py`) reconciles the output with what is wanted (open for the current stream, volume and mute, flush, close), with a time limit on every call, a backoff while the output does not open, and `available=false` in `client/state` meanwhile; `FakeSink` can fail or hang to test this, and `Sink.abort()` is the synchronous kill used when the plugin unloads. The plugin's `_unload` does everything in `_unload_now` (`main.py`) synchronously, before its first `await`: Decky closes the plugin runner's socket right after asking for the unload and the loop that reads it then spins without yielding, so nothing that needs the event loop (a timer, a subprocess wait) can finish and Decky kills the plugin after five seconds. Every component therefore has a synchronous `abort()` (`Lifecycle`, `ProtocolServer`, `Advertiser`, the Sendspin listener, session and sink). The playback sync correction (`syncfix.py`, `Scheduler.observe`, `PipeWireSink.pending_us`): the clock sync (`client/time`) lines the device clock up with the server's, but the audio hardware runs at its own speed, so a long stream (crossfade keeps one going) drains or fills the pipe to `pw-cat`. `PipeWireSink.pending_us()` reads the pipe's byte count (`FIONREAD`, plus asyncio's own buffer); the scheduler compares it with where its model says the next frame plays and `DriftTracker` keeps a slow average of the difference, relative to the first 15 to 45 seconds of a stream. The loop is lopsided on purpose: it inserts single frames from an 8 ms error (it only grows the cushion) and drops them only for a 40 ms lag, because the reading wanders by about 12 ms without any drift (a beat between our writes and the stream's blocks) and a loop that dropped frames on that noise shrank the cushion. At most 0.1% of the audio is altered, planned over a minute. The tests simulate drift and noise (`tests/test_sendspin_syncfix.py`); the session logs `hardware drift` and `frames trimmed` every 15 seconds when there is something to report and as a heartbeat otherwise. To diagnose a stutter on a device: the stream's `ERR` column in `pw-top` is its underrun count, and the pipe's fill can be sampled from outside by opening `/proc/<pw-cat pid>/fd/0` and calling `FIONREAD`. The frontend side is `src/media/` (`card.ts`, `MediaCard.tsx`, and `registerTab.tsx` which wraps Decky's `tabsHook.render` to add the Quick Access tab; never use `tabsHook.add` for this, it corrupts the menu). The tests use a scripted server (`tests/sendspin_peer.py`) over a real loopback websocket and a fake audio sink, so they need neither PipeWire nor a network. The scripted server can announce any roles and send metadata, controller state and covers (`send_cover`), and the codec tests use real Music Assistant chunks (`tests/sendspin_flac_fixtures.py`, `tests/sendspin_opus_fixtures.py`).
+Code in `piston_device/sendspin/`:
+- `crypto.py`: X25519 and ChaCha20-Poly1305 through `ctypes` over the system `libcrypto`, checked with RFC test vectors at start (the plugin has no dependencies).
+- `noise.py`: Noise KKpsk2, checked against transcripts from the `noiseprotocol` package in `tests/sendspin_noise_vectors.py`.
+- `messages.py`, `clock.py` (the specification's time filter), `session.py`, `listener.py`.
+- `codecs.py`: FLAC and Opus through `ctypes` over `libFLAC` and `libopus`, each with a start-up self-test; a codec that fails is not offered.
+- `scheduler.py`: queues encoded chunks and decodes them just before they play.
+- `syncfix.py`: the playback sync correction (below).
+- `sink.py`: a `pw-cat` stream.
+- `artwork.py` (reassembles the cover from the artwork messages) and `card.py` (the media card state).
+- `mixin.py`: also exposes the card to the Steam interface: the `sendspin_card` event, the `get_sendspin_card`, `get_sendspin_card_config`, `sendspin_card_command` and `sendspin_card_volume` callables and the nonce-protected `/sendspin/cover` route.
+
+The frontend side is `src/media/`: `card.ts`, `MediaCard.tsx`, and `registerTab.tsx`, which wraps Decky's `tabsHook.render` to add the Quick Access tab (never `tabsHook.add`, see [architecture.md](architecture.md)).
+
+Rules that shape this code are in [architecture.md](architecture.md):
+- Unload: everything runs in `_unload_now` (`main.py`) before its first `await`, and every component has a synchronous `abort()` (`Lifecycle`, `ProtocolServer`, `Advertiser`, the Sendspin listener, session and sink). `Sink.abort()` is the synchronous kill used on unload.
+- Audio output: the session never touches it from the task that reads the server's messages. The audio task (`_audio_loop` in `session.py`) reconciles the output with what is wanted (open for the current stream, volume and mute, flush, close), with a time limit on every call, a backoff while the output does not open, and `available=false` in `client/state` meanwhile. `FakeSink` can fail or hang to test this.
+
+Playback sync correction (`syncfix.py`, `Scheduler.observe`, `PipeWireSink.pending_us`):
+- The clock sync (`client/time`) lines the device clock up with the server's, but the audio hardware runs at its own speed, so a long stream (crossfade keeps one going) drains or fills the pipe to `pw-cat`.
+- `PipeWireSink.pending_us()` reads the pipe's byte count (`FIONREAD`, plus asyncio's own buffer). The scheduler compares it with where its model says the next frame plays, and `DriftTracker` keeps a slow average of the difference, relative to the first 15 to 45 seconds of a stream.
+- The loop is lopsided on purpose: it inserts single frames from an 8 ms error (it only grows the cushion) and drops them only for a 40 ms lag, because the reading wanders by about 12 ms without any drift (a beat between our writes and the stream's blocks), and a loop that dropped frames on that noise shrank the cushion.
+- At most 0.1% of the audio is altered, planned over a minute. The session logs `hardware drift` and `frames trimmed` every 15 seconds when there is something to report and as a heartbeat otherwise.
+
+Tests:
+- They use a scripted server (`tests/sendspin_peer.py`) over a real loopback websocket and a fake audio sink, so they need neither PipeWire nor a network.
+- The scripted server can announce any roles and send metadata, controller state and covers (`send_cover`).
+- The codec tests use real Music Assistant chunks (`tests/sendspin_flac_fixtures.py`, `tests/sendspin_opus_fixtures.py`).
+- The sync tests simulate drift and noise (`tests/test_sendspin_syncfix.py`).
+
+Diagnosing a stutter on a device:
+- The stream's `ERR` column in `pw-top` is its underrun count.
+- The pipe's fill can be sampled from outside by opening `/proc/<pw-cat pid>/fd/0` and calling `FIONREAD`.
 
 To try it against a real Music Assistant without the device, run the listener from a script on a development machine, or run the reference player with `uvx --from sendspin sendspin daemon` to see what a well-behaved player looks like. Volume and mute set by Music Assistant are saved after two quiet seconds, because announcements raise and restore the volume.

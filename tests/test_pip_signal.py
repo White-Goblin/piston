@@ -131,7 +131,7 @@ class HttpTests(unittest.IsolatedAsyncioTestCase):
     async def test_bad_input(self):
         self.assertEqual((await self.request("GET", f"/pip/events?nonce=N0NCE&session={SESSION}&after=abc"))[0], 400)
         self.assertEqual((await self.request("POST", f"/pip/send?nonce=N0NCE&session={SESSION}", {"kind": "answer"}))[0], 400)
-        self.assertEqual((await self.request("POST", f"/pip/send?nonce=N0NCE&session=unknown-1234", {"kind": "start"}))[0], 404)
+        self.assertEqual((await self.request("POST", "/pip/send?nonce=N0NCE&session=unknown-1234", {"kind": "start"}))[0], 404)
         self.assertEqual((await self.request("DELETE", "/pip/send"))[0], 405)
         self.assertEqual((await self.request("GET", "/nothing"))[0], 404)
 

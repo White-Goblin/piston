@@ -1,4 +1,3 @@
-import asyncio
 import unittest
 
 from homeassistant.core import HomeAssistant

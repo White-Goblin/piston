@@ -25,7 +25,7 @@ class FakeStream:
         self.started = True
 
     def endpoint_url(self, fmt):
-        return f"/api/hls/tok/master_playlist.m3u8"
+        return "/api/hls/tok/master_playlist.m3u8"
 
 
 class FakeCamera:
@@ -160,7 +160,6 @@ class EndToEndTests(unittest.IsolatedAsyncioTestCase):
 
         import main
         from custom_components.piston.client import DeckyClient
-        from custom_components.piston.coordinator import DeckyCoordinator
         from . import plugin_environment_patches, use_temp_settings_dir
         from .stdlib_transport import StdTransport
 

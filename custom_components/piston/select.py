@@ -62,7 +62,7 @@ class PipCameraSelect(DeckyEntity, SelectEntity):
         """Option label -> camera entity id, for the cameras chosen in the integration options."""
         ids = self.coordinator.options[OPT_PIP_CAMERAS]
         labels = [self._label(i) for i in ids]
-        return {(l if labels.count(l) == 1 and l != OFF else f"{l} ({i})"): i for l, i in zip(labels, ids)}
+        return {(label if labels.count(label) == 1 and label != OFF else f"{label} ({i})"): i for label, i in zip(labels, ids)}
 
     @property
     def options(self) -> list:

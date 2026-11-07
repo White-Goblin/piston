@@ -59,9 +59,8 @@ cli/decky
 # Vendored deps bytecode
 py_modules/**/__pycache__/
 
-# Claude Code instructions and handoff notes (kept locally, not published)
-AGENTS.md
-CLAUDE.md
+# Local agent notes with real dev details (never published; AGENTS.md and CLAUDE.md are tracked)
+AGENTS.local.md
 
 # Claude Code local state
 .claude/

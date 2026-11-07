@@ -1,7 +1,6 @@
 """The repository stays eligible for the HACS default list and a release cannot go out inconsistent."""
 import json
 import os
-import re
 import shutil
 import sys
 import tempfile

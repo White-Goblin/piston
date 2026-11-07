@@ -1,5 +1,4 @@
 """The aiohttp transport, with a fake `aiohttp` module (it is not installed for the test run)."""
-import asyncio
 import enum
 import importlib
 import sys

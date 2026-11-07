@@ -28,3 +28,24 @@ class PublicTreeTests(unittest.TestCase):
             finally:
                 check_public.ROOT = old
         self.assertEqual([x.split(": ", 1)[1] for x in found], ["email address", "MAC address", "private IP address " + bad_ip])
+
+    def test_a_retired_project_name_is_flagged_except_in_the_changelog(self):
+        import tempfile
+        old = "dec" + "ky"
+        names = [old + "_home_" + "assistant", old + "_" + "ha", old.capitalize() + " Home " + "Assistant"]
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("x.md", "CHANGELOG.md"):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("\n".join(f"was {n}" for n in names) + f"\nfine: {old}_have and {old}-ha\n")
+            saved = check_public.ROOT
+            check_public.ROOT = d
+            try:
+                found = check_public.scan(["x.md", "CHANGELOG.md"])
+            finally:
+                check_public.ROOT = saved
+        self.assertEqual(found, [f"x.md:{i}: retired project name" for i in (1, 2, 3)])
+
+    def test_the_checker_script_does_not_contain_the_names_it_looks_for(self):
+        with open(os.path.join(ROOT, "scripts", "check_public.py"), encoding="utf-8") as f:
+            text = f.read()
+        self.assertEqual([p.pattern for p in check_public.RETIRED if p.search(text)], [])

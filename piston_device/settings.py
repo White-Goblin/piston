@@ -51,8 +51,8 @@ def default_settings() -> dict:
         "apps": [],
         "controllers_seen": [],
         "sensor_interval": 10,
-        "remote_input": True,  # Home Assistant may move the pointer and type (the remote card); see swe/specs/architecture/device-input-backend.md
-        # Sendspin background player (see swe/specs/features/sendspin-player.md)
+        "remote_input": True,  # Home Assistant may move the pointer and type (the remote card)
+        # Sendspin background player
         "sendspin_enabled": True,
         "sendspin_name": "",  # empty = "<device name> audio"
         "sendspin_private_key": "",  # hex Curve25519 private key, created on first use; its public key is the client id

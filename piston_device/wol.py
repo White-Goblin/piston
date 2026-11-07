@@ -6,9 +6,7 @@ import re
 import shlex
 import subprocess
 
-import decky
 
-from .proto import messages as m
 
 NET = "/sys/class/net"
 

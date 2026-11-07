@@ -1,0 +1,12 @@
+{
+  "_note": "Names that must never be removed or renamed (docs/architecture.md, 'The handshake is frozen; the protocol only grows'). Adding a name needs no edit here; a breaking change edits this file and bumps the protocol version in the same commit.",
+  "protocol_version": 3,
+  "lane_version": 1,
+  "frame_types": ["hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status", "input"],
+  "commands": ["launch", "quit", "power", "audio", "media_key", "get_artwork", "toast", "pip_show", "pip_hide", "pip_signal",
+               "set_sensor_interval", "sendspin_enable", "unpair", "resync"],
+  "state_groups": ["device", "apps", "audio", "sensors", "controllers", "pip", "media", "sendspin"],
+  "events": ["going_to_sleep", "shutting_down", "resumed", "toast_click", "pip_signal"],
+  "error_codes": ["bad_request", "unauthorized", "busy", "offline", "not_running", "unsupported", "internal", "version_skew"],
+  "close_codes": {"CLOSE_VERSION": 4000, "CLOSE_REPLACED": 4001, "CLOSE_UNAUTHORIZED": 4002, "CLOSE_BAD_REQUEST": 4003}
+}

@@ -2,7 +2,7 @@
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from custom_components.piston.client import CommandError, DeviceOffline
+from custom_components.piston.client import DeviceOffline
 from custom_components.piston.coordinator import DeckyCoordinator
 
 

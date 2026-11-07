@@ -1,0 +1,18 @@
+# Lint only (no formatter). Pinned in .github/workflows/tests.yml; bump both together.
+target-version = "py313"
+extend-exclude = ["node_modules", "dist", "out", ".venv-ha", "py_modules"]
+
+[lint]
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# Decky runs main.py from its own folder: sys.path is set up before the package imports.
+"main.py" = ["E402"]
+# A no-op logger default that the module replaces at start-up.
+"piston_device/sendspin/codecs.py" = ["E731"]
+# Tests: short throwaway lambdas and names (l, r for left/right), and values kept for readability.
+"tests/**" = ["E731", "E741", "F841"]
+# The Home Assistant stand-ins define classes in two blocks and import late on purpose.
+"tests/ha_stubs/__init__.py" = ["E402", "F811"]
+# pytest fixtures are imported from a sibling test module, and the fixture decorator module may only be needed for typing.
+"tests/ha/*.py" = ["F401"]

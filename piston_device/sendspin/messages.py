@@ -1,6 +1,6 @@
 """Sendspin message shapes: the cleartext init frames, the encrypted JSON and binary frames, and the audio chunk.
 
-Exact field names come from swe/notes/sendspin/spec-shapes.md. Every JSON message is `{"type": ..., "payload": {...}}`.
+Field names follow the Sendspin specification. Every JSON message is `{"type": ..., "payload": {...}}`.
 Everything received is validated and bounded; anything malformed raises SendspinProtocolError (the caller closes)."""
 import base64
 import json
@@ -168,7 +168,7 @@ class Defragmenter:
             _require(self._type is None, "message inside a fragmented one")
             return plaintext
         _require(len(plaintext) >= 2, "fragment too short")
-        flags, first, last = plaintext[1], bool(plaintext[1] & 2), bool(plaintext[1] & 1)
+        first, last = bool(plaintext[1] & 2), bool(plaintext[1] & 1)
         if first:
             _require(self._type is None, "a new fragmented message started before the last ended")
             _require(len(plaintext) >= 3 and plaintext[2] != MSG_FRAGMENT, "bad first fragment")

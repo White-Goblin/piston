@@ -1,9 +1,6 @@
-import asyncio
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.helpers.issue_registry import IssueRegistry
 
 from custom_components.piston.unreachable import CHECK_EVERY, UNREACHABLE_AFTER, UnreachableMonitor

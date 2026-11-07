@@ -1,1 +1,1 @@
-"""Sendspin player client (see swe/specs/architecture/sendspin-client.md)."""
+"""Sendspin player client (see docs/architecture.md and docs/development.md)."""

@@ -1,6 +1,6 @@
 """Fail when the tree contains personal or network-specific data that must not be published.
 
-Generic rules always apply (real-looking emails, MAC addresses and private IP addresses). If a git-ignored
+Generic rules always apply (real-looking emails, MAC addresses, private IP addresses and the project's retired names). If a git-ignored
 `.public-check.local` exists, each of its lines is also a case-insensitive regex for the maintainer's own
 identifiers. Run: python3 scripts/check_public.py
 """
@@ -19,6 +19,12 @@ MAC = re.compile(r"\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\b")
 MAC_OK = {"aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "11:22:33:44:55:66", "00:11:22:33:44:55", "zz:zz:zz:zz:zz:zz"}
 IP = re.compile(r"(?<![\d.])((?:10|127|172|192)\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![\d.]*\d)")
 IP_OK_PREFIXES = ("10.0.0.", "192.168.1.", "127.", "172.17.", "10.255.255.255")
+# Names the project used before it was called Piston. They are assembled from fragments so this file does not contain them
+# (and so it passes its own check). The CHANGELOG documents the rename for users and is the only file allowed to name them.
+_OLD = "decky"
+RETIRED = [re.compile(_OLD + "_home_" + "assistant", re.IGNORECASE), re.compile(_OLD + "_ha" + r"\b", re.IGNORECASE),
+           re.compile(_OLD + " home " + "assistant", re.IGNORECASE)]
+RETIRED_OK_FILES = {"CHANGELOG.md"}
 
 
 def tracked_files() -> list:
@@ -54,6 +60,11 @@ def scan(files: list | None = None) -> list:
             for m in IP.finditer(line):
                 if not m.group(1).startswith(IP_OK_PREFIXES):
                     findings.append(f"{rel}:{number}: private IP address {m.group(1)}")
+            if rel not in RETIRED_OK_FILES:
+                for pattern in RETIRED:
+                    if pattern.search(line):
+                        findings.append(f"{rel}:{number}: retired project name")
+                        break
             for pattern in patterns:
                 if pattern.search(line):
                     findings.append(f"{rel}:{number}: matches a local identifier")

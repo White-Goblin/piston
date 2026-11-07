@@ -1,10 +1,8 @@
-import asyncio
 import unittest
 from unittest import mock
 
 from . import StubLifecycle, fake as fake_decky, plugin_environment_patches, use_temp_settings_dir, wsclient
-from piston_device import server as server_module
-from piston_device.proto import PROTOCOL_VERSION, auth, messages as m, pake
+from piston_device.proto import PROTOCOL_VERSION, auth, pake
 import main
 
 

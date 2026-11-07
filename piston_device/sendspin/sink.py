@@ -1,6 +1,6 @@
 """The audio output of the Sendspin player: one `pw-cat` playback stream on the default sink, with its own volume and mute.
 
-Why a stream of its own (swe/notes/sendspin/spike-results.md): it is an ordinary PipeWire stream, so it mixes with game,
+Why a stream of its own: it is an ordinary PipeWire stream, so it mixes with game,
 app and system audio, follows the default output (HDMI, headphones, CEC) and has a volume independent of the system
 volume. Measured on the device: `--raw` is needed for headerless PCM, and the `--volume` flag does not show up in the
 stream, so the level is applied through `pactl` once the stream exists. To keep a stream from starting loud, `open()`
