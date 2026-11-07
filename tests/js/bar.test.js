@@ -452,3 +452,27 @@ test("show_volume off hides both the buttons and the slider", async () => {
     } finally { t.dom.uninstall(); }
   }
 });
+
+test("transport buttons call the media player's playback services and follow its state", async () => {
+  const t = setup({ mp: "playing" });
+  try {
+    await t.status("ready");
+    assert.equal(t.card._el.playPauseIcon.getAttribute("icon"), "mdi:pause");
+    for (const service of ["media_previous_track", "media_play_pause", "media_next_track"]) t.q(`[data-media="${service}"]`).fire("click");
+    await t.settle();
+    assert.deepEqual(t.calls, ["media_previous_track", "media_play_pause", "media_next_track"].map((s) => ["media_player", s, { entity_id: "media_player.box" }]));
+    t.setMp("paused");
+    assert.equal(t.card._el.playPauseIcon.getAttribute("icon"), "mdi:play");
+    assert.equal(t.card._el.transport.classList.contains("off"), false);
+    t.setMp("off");
+    assert.equal(t.card._el.transport.classList.contains("off"), true);
+  } finally { t.dom.uninstall(); }
+});
+
+test("show_transport off hides the playback row", async () => {
+  const t = setup({ config: { show_transport: false } });
+  try {
+    await t.status("ready");
+    assert.equal(t.card._el.transport.hidden, true);
+  } finally { t.dom.uninstall(); }
+});

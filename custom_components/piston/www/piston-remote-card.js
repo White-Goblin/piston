@@ -289,11 +289,11 @@
   const EDITOR_LABELS = {
     device_id: "Device", speed: "Pointer speed", pad_height: "Touchpad height", gap_pad_volume: "Space between the touchpad and the volume",
     gap_volume_buttons: "Space between the volume and the buttons", show_power: "Show the power button", show_apps: "Show the app picker",
-    show_volume: "Show the volume control", show_keyboard: "Show the keyboard button",
+    show_volume: "Show the volume control", show_keyboard: "Show the keyboard button", show_transport: "Show the play, pause, next and previous buttons",
   };
   /** What a card without these keys does. `pad_height` is a percentage of the screen height (the touchpad then also loses its
    * default minimum and maximum size); the gaps are extra pixels of empty space. */
-  const CONFIG_DEFAULTS = { speed: 1, pad_height: 34, gap_pad_volume: 0, gap_volume_buttons: 0, show_power: true, show_apps: true, show_volume: true, show_keyboard: true };
+  const CONFIG_DEFAULTS = { speed: 1, pad_height: 34, gap_pad_volume: 0, gap_volume_buttons: 0, show_power: true, show_apps: true, show_volume: true, show_keyboard: true, show_transport: true };
   const PAD_HEIGHT_RANGE = [15, 80], GAP_RANGE = [0, 160];
   const inRange = (value, [low, high], fallback) => {
     const usable = (typeof value === "number") || (typeof value === "string" && value.trim() !== "");
@@ -321,6 +321,7 @@
       { name: "show_apps", selector: { boolean: {} } },
       { name: "show_volume", selector: { boolean: {} } },
       { name: "show_keyboard", selector: { boolean: {} } },
+      { name: "show_transport", selector: { boolean: {} } },
     ];
   }
   /** The values the form shows: the card's defaults under what the user configured. */
@@ -484,6 +485,11 @@
     #volRange { flex: 1; min-width: 0; height: 46px; margin: 0; padding: 0 14px; border-radius: var(--pr-radius); accent-color: var(--pr-accent); touch-action: pan-y; }
     #volText { flex: none; min-width: 3.2em; text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--pr-muted); }
 
+    #transport { display: flex; gap: 8px; }
+    #transport button { flex: 1; min-width: 0; height: 46px; display: grid; place-items: center; padding: 0; border-radius: var(--pr-radius); }
+    #transport button ha-icon { --mdc-icon-size: 28px; color: var(--pr-text); }
+    #transport.off { opacity: .4; pointer-events: none; }
+
     /* dock: Steam and Quick Access on the left, the arrow wheel in the middle, Back and the keyboard on the right */
     #dock { display: grid; justify-content: center; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); column-gap: 12px; align-items: stretch; --dpad: min(210px, 42vw); }
     .zone { display: flex; flex-direction: column; gap: 8px; height: var(--dpad); min-width: 0; }
@@ -581,6 +587,11 @@
             <button class="ctl tile kb" id="kbBtn" aria-label="Keyboard"><ha-icon icon="mdi:keyboard-outline"></ha-icon></button>
           </div>
         </div>
+        <div id="transport">
+          <button class="ctl" data-media="media_previous_track" aria-label="Previous track"><ha-icon icon="mdi:skip-previous"></ha-icon></button>
+          <button class="ctl" data-media="media_play_pause" id="playPause" aria-label="Play or pause"><ha-icon id="playPauseIcon" icon="mdi:play-pause"></ha-icon></button>
+          <button class="ctl" data-media="media_next_track" aria-label="Next track"><ha-icon icon="mdi:skip-next"></ha-icon></button>
+        </div>
         <textarea id="kb" autocapitalize="sentences" autocomplete="off" autocorrect="on" spellcheck="true" aria-label="keyboard input"></textarea>
       </div>
       <div id="overlay"><div id="dialog" role="dialog" aria-modal="true"></div></div>
@@ -616,7 +627,7 @@
       }
       setConfig(config) {
         if (!config || typeof config !== "object") throw new Error("Invalid configuration");
-        this._config = { speed: 1, show_power: true, show_apps: true, show_volume: true, show_keyboard: true, ...config };
+        this._config = { speed: 1, show_power: true, show_apps: true, show_volume: true, show_keyboard: true, show_transport: true, ...config };
         this._outbox = new Outbox(this._config.speed);
         this._entsRef = null; this._mpRef = UNSET;
         this._ents = resolveEntities(this._hass, this._config.device_id);
@@ -694,12 +705,13 @@
         const $ = (sel) => this.shadowRoot.querySelector(sel);
         this._el = { pad: $("#pad"), hint: $("#hint"), badge: $("#badge"), badgeText: $("#badgeText"), ripple: $("#ripple"), toast: $("#toast"), wheel: $("#wheel"),
           hub: $("#hub"), esc: $("#esc"), kbBtn: $("#kbBtn"), kb: $("#kb"), bar: $("#bar"), power: $("#power"), powerText: $("#powerText"),
-          apps: $("#apps"), vol: $("#vol"), dock: $("#dock"), root: $("#root"), volLevel: $("#volLevel"), volMute: $("#volMute"), volMuteIcon: $("#volMuteIcon"), volRange: $("#volRange"), volText: $("#volText"), overlay: $("#overlay"), dialog: $("#dialog") };
+          apps: $("#apps"), vol: $("#vol"), dock: $("#dock"), transport: $("#transport"), playPauseIcon: $("#playPauseIcon"), root: $("#root"), volLevel: $("#volLevel"), volMute: $("#volMute"), volMuteIcon: $("#volMuteIcon"), volRange: $("#volRange"), volText: $("#volText"), overlay: $("#overlay"), dialog: $("#dialog") };
         this._bindPad();
         this._bindDock();
         this._bindBar();
         this._bindVolume();
         this._bindLevel();
+        this._bindTransport();
       }
       _update() {
         if (!this._config) return;
@@ -721,6 +733,9 @@
         el.kbBtn.hidden = el.kb.hidden = !cfg.show_keyboard;
         el.power.disabled = !s.power || !plan.action || this._dialogOpen;
         el.powerText.textContent = plan.label;
+        el.transport.hidden = !cfg.show_transport;
+        el.transport.classList.toggle("off", !s.volume);
+        el.playPauseIcon.setAttribute("icon", this._mpState === "playing" ? "mdi:pause" : "mdi:play");
         el.vol.classList.toggle("off", !s.volume);
         el.volLevel.classList.toggle("off", !s.volume);
         if (!this._volDragging) {                       // never fight the thumb while it is being dragged
@@ -858,6 +873,15 @@
           if (!id || !this.state.volume) return;
           this._call("media_player", "volume_mute", { entity_id: id, is_volume_muted: !(this._mpAttrs || {}).is_volume_muted });
         });
+      }
+      _bindTransport() {
+        for (const b of this._el.transport.querySelectorAll("[data-media]")) {
+          b.addEventListener("click", () => {
+            buzz();
+            const id = this._ents.mediaPlayer;
+            if (id && this.state.volume) this._call("media_player", b.dataset.media, { entity_id: id });
+          });
+        }
       }
       _stopVolume() {
         clearTimeout(this._volHold); clearInterval(this._volRep); this._volHold = this._volRep = 0;

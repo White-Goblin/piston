@@ -147,13 +147,13 @@ test("the stub config picks the first Piston device and is empty without one", (
 test("the editor form has a Piston device picker, a speed slider and the show options", () => {
   const schema = editorSchema();
   assert.deepEqual(schema[0], { name: "device_id", required: true, selector: { device: { integration: "piston" } } });
-  assert.deepEqual(schema.map((f) => f.name), ["device_id", "speed", "pad_height", "gap_pad_volume", "gap_volume_buttons", "show_power", "show_apps", "show_volume", "show_keyboard"]);
+  assert.deepEqual(schema.map((f) => f.name), ["device_id", "speed", "pad_height", "gap_pad_volume", "gap_volume_buttons", "show_power", "show_apps", "show_volume", "show_keyboard", "show_transport"]);
   assert.deepEqual(schema[1].selector.number, { min: 0.25, max: 4, step: 0.05, mode: "slider" });
   for (const field of schema) assert.ok(EDITOR_LABELS[field.name], field.name);
 });
 
 test("the editor shows the defaults under the configured values", () => {
-  assert.deepEqual(editorData({ device_id: "d1", speed: 2 }), { speed: 2, pad_height: 34, gap_pad_volume: 0, gap_volume_buttons: 0, show_power: true, show_apps: true, show_volume: true, show_keyboard: true, device_id: "d1" });
+  assert.deepEqual(editorData({ device_id: "d1", speed: 2 }), { speed: 2, pad_height: 34, gap_pad_volume: 0, gap_volume_buttons: 0, show_power: true, show_apps: true, show_volume: true, show_keyboard: true, show_transport: true, device_id: "d1" });
   assert.equal(editorData(undefined).speed, 1);
 });
 
@@ -172,7 +172,7 @@ test("the editor element reports a changed value as a config-changed event and p
     editor.setConfig({ type: "custom:piston-remote-card", device_id: "d1" });
     const form = editor.shadowRoot.querySelector("ha-form");
     assert.deepEqual(form.hass, { marker: 1 });
-    assert.equal(form.schema.length, 9);
+    assert.equal(form.schema.length, 10);
     assert.equal(form.computeLabel({ name: "speed" }), "Pointer speed");
     assert.equal(form.data.device_id, "d1");
     form.fire("value-changed", { detail: { value: { device_id: "d1", speed: 1.5, show_apps: false } } });
