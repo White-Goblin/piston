@@ -58,12 +58,30 @@ class HacsDefaultListTests(unittest.TestCase):
         self.assertIn("Hassfest", workflow)
         self.assertIn("actions: read", workflow)
 
-    def test_the_real_home_assistant_suite_runs_in_ci_with_a_coverage_floor_but_does_not_gate_releases(self):
+    def test_the_real_home_assistant_suite_runs_in_ci_on_the_pinned_and_the_newest_release(self):
         workflow = read(".github", "workflows", "tests.yml")
+        action = read(".github", "actions", "ha-tests", "action.yml")
         self.assertIn("ha-tests:", workflow)
-        self.assertIn("tests/ha/requirements.txt", workflow)
-        self.assertRegex(workflow, r"--cov-fail-under=\d+")
-        self.assertNotIn("pytest", read(".github", "workflows", "release.yml"))
+        self.assertIn("ha: [pinned, latest]", workflow)
+        self.assertIn("uses: ./.github/actions/ha-tests", workflow)
+        self.assertIn("schedule:", workflow)
+        self.assertIn("tests/ha/requirements.txt", action)
+        self.assertRegex(action, r"--cov-fail-under=\d+")
+
+    def test_the_pinned_home_assistant_run_is_the_minimum_the_manifest_and_hacs_declare(self):
+        import json
+        import re
+        requirements = read("tests", "ha", "requirements.txt")
+        pinned = re.search(r"homeassistant==(\d[\w.]*)", requirements).group(1)
+        self.assertEqual(json.loads(read("hacs.json"))["homeassistant"], pinned, "hacs.json minimum differs from the tests/ha pin")
+
+    def test_a_newest_release_failure_does_not_block_a_merge_but_blocks_a_release(self):
+        self.assertIn("continue-on-error: ${{ matrix.ha == 'latest' }}", read(".github", "workflows", "tests.yml"))
+        release = read(".github", "workflows", "release.yml")
+        self.assertNotIn("continue-on-error", release)
+        self.assertIn("ha: [pinned, latest]", release)
+        self.assertIn("uses: ./.github/actions/ha-tests", release)
+        self.assertRegex(release, r"release:\n    needs: ha-tests\n")
 
     def test_the_release_workflow_runs_the_card_tests_before_packaging(self):
         workflow = read(".github", "workflows", "release.yml")

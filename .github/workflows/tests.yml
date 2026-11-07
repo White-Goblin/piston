@@ -2,6 +2,9 @@ name: Tests
 
 on:
   workflow_dispatch:
+  schedule:
+    # Weekly, so a new Home Assistant release that breaks the integration shows up without a code change.
+    - cron: "17 5 * * 1"
   push:
     branches: [main]
   pull_request:
@@ -44,15 +47,20 @@ jobs:
       - run: npx tsc --noEmit -p . | grep -v node_modules | (! grep .)
       - run: node --test "tests/js/*.test.js"
   ha-tests:
-    # The integration inside a real Home Assistant (tests/ha). Pinned to the Home Assistant release the integration was verified against
-    # (tests/ha/requirements.txt); bump that file and the Python version together. Not a prerequisite of the release workflow.
+    # The integration inside a real Home Assistant (tests/ha), run against two releases (steps in .github/actions/ha-tests):
+    #   pinned: the release in tests/ha/requirements.txt, the one the integration was verified against (the floor). Bump it deliberately,
+    #           together with the Python version.
+    #   latest: the newest Home Assistant release, resolved fresh on every run (so it bumps itself). Here it does not block a merge: a
+    #           failure is an early warning that an upgrade needs work. The release workflow runs both and requires both to pass.
+    name: ha-tests (${{ matrix.ha }})
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.ha == 'latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ha: [pinned, latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: ./.github/actions/ha-tests
         with:
-          python-version: "3.14"
-          cache: pip
-          cache-dependency-path: tests/ha/requirements.txt
-      - run: pip install -r tests/ha/requirements.txt
-      - run: python -m pytest tests/ha -q --cov --cov-config=tests/ha/.coveragerc --cov-fail-under=95
+          ha: ${{ matrix.ha }}

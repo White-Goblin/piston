@@ -1,8 +1,8 @@
 # Dev-only: the Home Assistant test fixtures. The plugin and the stdlib test suite do not need any of this.
-# This release pins homeassistant==2026.10.4, the version the integration was verified against.
-pytest-homeassistant-custom-component==0.13.375
+# This release pins homeassistant==2026.10.0, the minimum hacs.json declares. CI also runs the newest release unpinned.
+pytest-homeassistant-custom-component==0.13.371
 pytest-cov
 # Home Assistant's camera component (the PiP relay's real helper defaults load it) declares this requirement
 PyTurboJPEG==1.8.3
-# The `frontend` component is a dependency of the integration (it serves the remote card); this is the version Home Assistant 2026.10.4 declares
-home-assistant-frontend==20260930.5
+# The `frontend` component is a dependency of the integration (it serves the remote card); this is the version Home Assistant 2026.10.0 declares
+home-assistant-frontend==20260930.2

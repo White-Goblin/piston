@@ -16,9 +16,13 @@ uv pip install --python .venv-ha/bin/python -r tests/ha/requirements.txt
 .venv-ha/bin/python -m pytest tests/ha -q --cov --cov-config=tests/ha/.coveragerc
 ```
 
-CI runs this suite as the `ha-tests` job of `.github/workflows/tests.yml` (Python 3.14, the pinned requirements, and a coverage
-floor of 95 percent that protects the quality scale `test-coverage` rule). The release workflow does not depend on it. When you
-change the pinned Home Assistant release in `requirements.txt`, change the Python version in that job in the same commit.
+CI runs this suite as the `ha-tests` job of `.github/workflows/tests.yml` (Python 3.14 and a coverage floor of 95 percent that
+protects the quality scale `test-coverage` rule), twice: `pinned` uses the requirements here (the release the integration was
+verified against), and `latest` installs the newest Home Assistant release fresh on every run, so it bumps itself. The `latest`
+run also happens weekly on a schedule; it is allowed to fail (`continue-on-error`) because its job is to warn that an upgrade needs
+work, not to block a merge. The steps live in `.github/actions/ha-tests`, which the release workflow reuses: a release is
+published only when both the `pinned` and the `latest` run pass, with no `continue-on-error`. When you change the pinned Home Assistant release in
+`requirements.txt`, change the Python version in that job in the same commit.
 
 ## What the coverage number covers
 
@@ -29,7 +33,7 @@ suite so the pairing, authentication and reconnect paths that need a misbehaving
 configured number is 97%.
 
 `requirements.txt` pins the release that matches the Home Assistant version the integration was verified against
-(2026.10.4). The device is played by the real `piston_device` protocol server on the loopback interface, so the tests
+(2026.10.0, the minimum hacs.json declares). The device is played by the real `piston_device` protocol server on the loopback interface, so the tests
 exercise the real protocol end to end.
 
 The fixtures also fail a test that leaves a timer or task running after the entry is unloaded, which is how
