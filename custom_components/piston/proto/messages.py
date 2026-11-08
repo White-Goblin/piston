@@ -41,6 +41,7 @@ MAX_INPUT_ERROR_LEN = 255
 INPUT_KEYS = ("Enter", "Backspace", "Escape", "Tab", "Up", "Down", "Left", "Right", "Home", "End", "PageUp", "PageDown",
               "Delete", "Space")
 INPUT_BUTTONS = ("l", "r")
+SEEK_LABEL_RE = re.compile(r"[+-][0-9:]{1,7}")   # how far a seek moved, as a signed number of seconds: +30, -90, +1:30
 INPUT_ACTIONS = ("steam", "qam")
 
 # Update lane frames (see docs/protocol.md): HA tells the device which release to install, the device reports progress.
@@ -124,6 +125,10 @@ def input_events(events) -> list:
         elif kind == "action":
             _require(event.get("a") in INPUT_ACTIONS, "action.a must be steam or qam")
             out.append({"k": "action", "a": event["a"]})
+        elif kind == "seek":
+            text = event.get("s")
+            _require(isinstance(text, str) and SEEK_LABEL_RE.fullmatch(text) is not None, "seek.s must be a signed number such as +30 or -1:30")
+            out.append({"k": "seek", "s": text})
         elif kind == "release":
             out.append({"k": "release"})
         else:

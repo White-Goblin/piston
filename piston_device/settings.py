@@ -52,6 +52,8 @@ def default_settings() -> dict:
         "controllers_seen": [],
         "sensor_interval": 10,
         "remote_input": True,  # Home Assistant may move the pointer and type (the remote card)
+        "seek_badge": True,  # a seek from the remote card draws how far it moved beside the cursor
+        "seek_nudge": True,  # and nudges the pointer so the playing app shows its progress bar
         # Sendspin background player
         "sendspin_enabled": True,
         "sendspin_name": "",  # empty = "<device name> audio"
@@ -115,8 +117,9 @@ class SettingsMixin:
         defaults = default_settings()
         stored = self._read_stored()
         settings = clean_sendspin({k: stored.get(k, v) for k, v in defaults.items()})
-        if not isinstance(settings["remote_input"], bool):
-            settings["remote_input"] = True
+        for key in ("remote_input", "seek_badge", "seek_nudge"):
+            if not isinstance(settings[key], bool):
+                settings[key] = True
         if not re.fullmatch(r"[a-z0-9]{12}", str(settings["device_id"])):
             settings["device_id"] = secrets.token_hex(6)
             write_json_atomic(self._settings_path(), settings)

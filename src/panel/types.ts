@@ -20,6 +20,8 @@ export interface Status {
   remote_input: boolean;
   /** Set while remote input is on but the virtual input devices could not be created */
   remote_input_error: string;
+  seek_badge: boolean;
+  seek_nudge: boolean;
 }
 
 export interface PairingState {
@@ -49,5 +51,7 @@ export interface PanelState {
   pairing: PairingState;
   setApps: (apps: LibraryGame[]) => void;
   setRemoteInput: (enabled: boolean) => void;
+  setSeekBadge: (enabled: boolean) => void;
+  setSeekNudge: (enabled: boolean) => void;
   reset: () => Promise<void>;
 }

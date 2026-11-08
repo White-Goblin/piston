@@ -28,7 +28,7 @@ Not every app works with the media player controls. Play, pause, next, previous 
 
 | Entity | What it does |
 |---|---|
-| Media player | Turn the SteamOS device on (Wake on LAN) and off, pick an app or game as the source, play, pause, next, previous, volume and mute |
+| Media player | Turn the SteamOS device on (Wake on LAN) and off, pick an app or game as the source, play, pause, next, previous, seek, volume and mute |
 | Desktop mode (switch) | Switch between game mode and desktop mode |
 | Plugin update (update), Install plugin updates automatically (switch) | Keep the plugin on the device at the same version as the integration |
 | Restart device, Restart Steam (buttons) | Reboot the device or restart the Steam client |
@@ -45,9 +45,9 @@ Not every app works with the media player controls. Play, pause, next, previous 
 From version 0.8.0 Piston adds a dashboard card, **Piston remote**, that turns your phone (or any dashboard) into a touchpad and keyboard for the device. It is part of the integration: there is no resource to add by hand.
 
 - **Add it:** edit a dashboard, choose Add card, pick **Piston remote** and choose the device. In YAML: `type: custom:piston-remote-card` with `device_id` (the card editor sets it for you).
-- **What it has:** a touchpad (drag to move, tap to click, two fingers to right-click, two fingers to scroll or flick), an arrow wheel with Enter (hold to repeat, spin your thumb around it to scroll), Steam menu, Quick Access and Back buttons, the phone keyboard for typing, volume (a slider when the device uses system volume, down, mute and up buttons for HDMI CEC), a power button and an app picker. A cursor is drawn on the device's screen, above menus and games, while you use it.
+- **What it has:** a touchpad (drag to move, tap to click, two fingers to right-click, two fingers to scroll or flick), an arrow wheel with Enter (hold to repeat, spin your thumb around it to scroll), Steam menu, Quick Access and Back buttons, the phone keyboard for typing, volume (a slider when the device uses system volume, down, mute and up buttons for HDMI CEC), a power button, an app picker and a previous, seek back, play/pause, seek forward and next row (the seek buttons move 10 seconds, hold to keep going). A cursor is drawn on the device's screen, above menus and games, while you use it.
 - **Power and apps:** when the device is off the power button wakes it with Wake on LAN. When it is on, turning it off always asks first. The app picker lists Steam and the apps you added under *Apps in Home Assistant* in the Piston panel on the device (add them there, or the list only has Steam); choosing Steam closes the running app.
-- **Who can use it:** only Home Assistant administrators, because the card can type on the device. Turn on **Remote input for all users** in the integration's options to allow everyone. The device also has its own switch, **Allow remote input**, in the Piston panel (on by default); turned off, the device ignores the card.
+- **Who can use it:** only Home Assistant administrators, because the card can type on the device. Turn on **Remote input for all users** in the integration's options to allow everyone. The device also has its own switch, **Allow remote input**, in the Piston panel (on by default); turned off, the device ignores the card. Two more switches there control what a seek from the card does on the device: **Show seek amount on the cursor** and **Nudge the pointer on seek** (which makes the playing app show its progress bar).
 - **Fit it to your screen:** in the card editor, three sliders set the touchpad height and the empty space above and below the volume control, so a card in a panel (single card) view can fill the phone's screen.
 - **Tips:** on an iPhone a two-finger sideways drag also switches dashboard tabs and a card cannot stop that, so give the card a dashboard with a single view. Only plain keyboard characters can be typed (no accents or emoji).
 

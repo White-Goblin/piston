@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { LibraryGame } from "../control/device";
-import { getPairingState, getSettings, getStatus, resetPairing, saveApps, setRemoteInput } from "./api";
+import { getPairingState, getSettings, getStatus, resetPairing, saveApps, setRemoteInput, setSeekBadge, setSeekNudge } from "./api";
 import { PairingState, PanelState, Settings, Status } from "./types";
 
 const POLL_MS = 2000;
@@ -37,6 +37,14 @@ export function usePanelState(): PanelState | undefined {
     setRemoteInput: (enabled: boolean) => {
       setStatus({ ...status, remote_input: enabled, remote_input_error: "" });
       setRemoteInput(enabled).then((r) => setStatus((cur) => cur && { ...cur, remote_input: r.remote_input, remote_input_error: r.error }));
+    },
+    setSeekBadge: (enabled: boolean) => {
+      setStatus({ ...status, seek_badge: enabled });
+      setSeekBadge(enabled).then((r) => setStatus((cur) => cur && { ...cur, seek_badge: r.seek_badge }));
+    },
+    setSeekNudge: (enabled: boolean) => {
+      setStatus({ ...status, seek_nudge: enabled });
+      setSeekNudge(enabled).then((r) => setStatus((cur) => cur && { ...cur, seek_nudge: r.seek_nudge }));
     },
     reset: async () => {
       setPairing(await resetPairing());

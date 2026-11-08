@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { installDom } from "./dom.js";
 import { loadCard } from "./load.js";
 
-const { powerPlan, appsView, volumeView, VolumeSender } = loadCard();
+const { powerPlan, appsView, volumeView, VolumeSender, seekView, SeekHold, seekLabel } = loadCard();
 
 // ---- pure ---------------------------------------------------------------------------------------------------------
 
@@ -451,4 +451,160 @@ test("show_volume off hides both the buttons and the slider", async () => {
       assert.deepEqual([t.card._el.volLevel.hidden, t.card._el.vol.hidden], [true, true]);
     } finally { t.dom.uninstall(); }
   }
+});
+
+test("transport: play/pause, previous and next are plain clicks on the media player's services and follow its state", async () => {
+  const t = setup({ mp: "playing" });
+  try {
+    await t.status("ready");
+    assert.equal(t.card._el.playPauseIcon.getAttribute("icon"), "mdi:pause");
+    for (const service of ["media_previous_track", "media_play_pause", "media_next_track"]) t.q(`[data-media="${service}"]`).fire("click");
+    await t.settle();
+    assert.deepEqual(t.calls, ["media_previous_track", "media_play_pause", "media_next_track"].map((s) => ["media_player", s, { entity_id: "media_player.box" }]));
+    t.setMp("paused");
+    assert.equal(t.card._el.playPauseIcon.getAttribute("icon"), "mdi:play");
+    assert.equal(t.card._el.transport.classList.contains("off"), false);
+    t.setMp("off");
+    assert.equal(t.card._el.transport.classList.contains("off"), true);
+  } finally { t.dom.uninstall(); }
+});
+
+test("the row has five buttons in order: previous, seek back, play/pause, seek forward, next, with MDI glyphs", async () => {
+  const t = setup({ mp: "playing" });
+  try {
+    await t.status("ready");
+    const html = t.card.shadowRoot.innerHTML;
+    const icons = [...html.slice(html.indexOf('id="transport"')).matchAll(/icon="(mdi:[a-z0-9-]+)"/g)].map((m) => m[1]).slice(0, 5);
+    assert.deepEqual(icons, ["mdi:skip-previous", "mdi:rewind-10", "mdi:play-pause", "mdi:fast-forward-10", "mdi:skip-next"]);
+  } finally { t.dom.uninstall(); }
+});
+
+// ---- seeking: the two seek buttons ----------------------------------------------------------------------------------
+
+const SEEKABLE = { supported_features: 2, media_duration: 600, media_position: 100 };
+const seeks = (t) => t.calls.filter((c) => c[1] === "media_seek").map((c) => c[2].seek_position);
+const forward = (t) => t.q('[data-seek="1"]'), back = (t) => t.q('[data-seek="-1"]');
+
+test("seek view: needs the SEEK feature, a duration and a position, and advances while playing", () => {
+  const now = Date.parse("2026-01-01T00:00:10Z");
+  const attrs = { ...SEEKABLE, media_position_updated_at: "2026-01-01T00:00:00Z" };
+  assert.deepEqual(seekView(attrs, "paused", now), { canSeek: true, position: 100, duration: 600 });
+  assert.equal(seekView(attrs, "playing", now).position, 110);
+  assert.equal(seekView({ ...attrs, media_position: 595 }, "playing", now).position, 600);
+  for (const bad of [undefined, {}, { ...SEEKABLE, supported_features: 0 }, { ...SEEKABLE, media_duration: undefined }, { ...SEEKABLE, media_position: undefined }])
+    assert.equal(seekView(bad, "paused", now).canSeek, false);
+});
+
+test("seek hold: steps of 10 s in its own target, clamped, null at an end", () => {
+  const up = new SeekHold(95, 120, 1);
+  assert.deepEqual([up.tick(), up.tick(), up.tick(), up.tick()], [105, 115, 120, null]);
+  const down = new SeekHold(15, 120, -1);
+  assert.deepEqual([down.tick(), down.tick(), down.tick()], [5, 0, null]);
+});
+
+test("a tap on a seek button seeks one step; a hold repeats every 400 ms after the first 400 ms; neither skips a track", async () => {
+  const t = setup({ mp: "paused", attrs: SEEKABLE });
+  try {
+    await t.status("ready");
+    forward(t).fire("pointerdown"); t.dom.advance(100); forward(t).fire("pointerup");           // a tap
+    t.dom.advance(100);
+    await t.settle();
+    assert.deepEqual(seeks(t), [110]);
+    t.calls.length = 0; t.card._seekAim = null;
+    forward(t).fire("pointerdown"); t.dom.advance(1250); forward(t).fire("pointerup");          // a hold: at 0, 400, 800 and 1200 ms
+    t.dom.advance(100);                                                                          // the last nudge's move back
+    await t.settle();
+    assert.deepEqual(seeks(t), [110, 120, 130, 140]);
+    assert.ok(t.calls.every((c) => c[1] === "media_seek" && c[2].entity_id === "media_player.box"));
+    assert.equal(t.dom.timers.size, 0);
+    t.calls.length = 0; t.card._seekAim = null;
+    back(t).fire("pointerdown"); t.dom.advance(850); back(t).fire("pointerup");
+    t.dom.advance(100);
+    await t.settle();
+    assert.deepEqual(seeks(t), [90, 80, 70]);
+    assert.equal(t.calls.some((c) => c[1].endsWith("_track")), false);
+  } finally { t.dom.uninstall(); }
+});
+
+test("quick taps build on where the last one aimed; after a few seconds the reported position is used again", async () => {
+  const t = setup({ mp: "paused", attrs: SEEKABLE });
+  try {
+    await t.status("ready");
+    for (let i = 0; i < 3; i++) { forward(t).fire("pointerdown"); forward(t).fire("pointerup"); }
+    back(t).fire("pointerdown"); back(t).fire("pointerup");
+    t.card._seekAim.at -= 5000;                                                                  // long enough ago
+    forward(t).fire("pointerdown"); forward(t).fire("pointerup");
+    t.dom.advance(200);
+    await t.settle();
+    assert.deepEqual(seeks(t), [110, 120, 130, 120, 110]);
+  } finally { t.dom.uninstall(); }
+});
+
+test("seek label: signed seconds, minutes and seconds from a minute on", () => {
+  assert.deepEqual([10, 30, 59, 60, 90, 600, 3599, -10, -90].map(seekLabel), ["+10", "+30", "+59", "+1:00", "+1:30", "+10:00", "+59:59", "-10", "-1:30"]);
+});
+
+test("each seek step tells the device how far this run of presses has moved, in a frame of its own", async () => {
+  const t = setup({ mp: "paused", attrs: SEEKABLE });
+  try {
+    await t.status("ready");
+    const labels = () => t.sent.flatMap((m) => m.events).map((e) => e.k === "seek" ? e.s : "?");
+    for (let i = 0; i < 3; i++) { forward(t).fire("pointerdown"); forward(t).fire("pointerup"); }
+    back(t).fire("pointerdown"); back(t).fire("pointerup");
+    assert.deepEqual(labels(), ["+10", "+20", "+30", "+20"]);                                    // only seek events: the card moves no pointer itself
+    assert.ok(t.sent.every((m) => m.events.length === 1));
+    t.card._seekAim.at -= 5000;                                                                  // a new run starts from the reported position again
+    back(t).fire("pointerdown"); back(t).fire("pointerup");
+    assert.equal(labels().pop(), "-10");
+    assert.equal(t.dom.timers.size, 0);                                                          // no nudge timers on the card any more
+    t.sent.length = 0;
+    await t.status("device_off");                                                                // no remote input: nothing is sent, the seek still goes
+    forward(t).fire("pointerdown"); forward(t).fire("pointerup");
+    await t.settle();
+    assert.equal(t.sent.length, 0);
+    assert.equal(seeks(t).length, 6);
+  } finally { t.dom.uninstall(); }
+});
+
+test("a held seek stops at the ends and by leaving or cancelling, with no timers left", async () => {
+  const t = setup({ mp: "paused", attrs: { ...SEEKABLE, media_position: 15 } });
+  try {
+    await t.status("ready");
+    back(t).fire("pointerdown"); t.dom.advance(3000); back(t).fire("pointerup");
+    t.dom.advance(100);
+    await t.settle();
+    assert.deepEqual(seeks(t), [5, 0]);                                                          // then nothing more at the start
+    t.calls.length = 0; t.card._seekAim = null;
+    for (const ev of ["pointerleave", "pointercancel"]) {
+      back(t).fire("pointerdown"); t.dom.advance(500); back(t).fire(ev); t.dom.advance(3000);
+      await t.settle();
+      assert.equal(seeks(t).length, 2, ev);                                                      // the press and the first repeat only
+      assert.equal(t.dom.timers.size, 0);
+      t.calls.length = 0; t.card._seekAim = null;
+    }
+  } finally { t.dom.uninstall(); }
+});
+
+test("without the SEEK feature the seek buttons are dimmed and do nothing; with it they are enabled", async () => {
+  const t = setup({ mp: "playing", attrs: { supported_features: 0 } });
+  try {
+    await t.status("ready");
+    assert.equal(forward(t).classList.contains("off"), true);
+    forward(t).fire("pointerdown"); t.dom.advance(2000); forward(t).fire("pointerup");
+    await t.settle();
+    assert.deepEqual(t.calls, []);
+    assert.equal(t.dom.timers.size, 0);
+    t.setMp("playing", SEEKABLE);
+    assert.equal(forward(t).classList.contains("off"), false);
+    t.setMp("off", SEEKABLE);
+    assert.equal(forward(t).classList.contains("off"), true);
+  } finally { t.dom.uninstall(); }
+});
+
+test("show_transport off hides the playback row", async () => {
+  const t = setup({ config: { show_transport: false } });
+  try {
+    await t.status("ready");
+    assert.equal(t.card._el.transport.hidden, true);
+  } finally { t.dom.uninstall(); }
 });

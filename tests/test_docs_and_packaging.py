@@ -45,11 +45,11 @@ class DocsMatchTheCode(unittest.TestCase):
             self.assertIn(name, protocol)
         for status in input_status.STATUSES:
             self.assertIn(f"`{status}`", protocol, f"status {status} is not in protocol.md")
-        for key in ("device_id", "speed", "show_power", "show_apps", "show_volume", "show_keyboard"):
+        for key in ("device_id", "speed", "show_power", "show_apps", "show_volume", "show_keyboard", "show_transport"):
             self.assertIn(f"`{key}`", reference, f"card key {key} is not in the reference")
         for key in messages.INPUT_KEYS:
             self.assertIn(key, protocol)
-        for kind in ("move", "scroll", "click", "key", "text", "action", "release"):
+        for kind in ("move", "scroll", "click", "key", "text", "action", "seek", "release"):
             self.assertIn(f'"k":"{kind}"', protocol.replace(" ", ""), f"event {kind} is not in protocol.md")
         self.assertIn("piston-remote-card", read("README.md"))
 

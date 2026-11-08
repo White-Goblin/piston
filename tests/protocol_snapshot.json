@@ -3,7 +3,7 @@
   "protocol_version": 3,
   "lane_version": 1,
   "frame_types": ["hello", "challenge", "proof", "pair", "cmd", "result", "state", "event", "update", "update_status", "input"],
-  "commands": ["launch", "quit", "power", "audio", "media_key", "get_artwork", "toast", "pip_show", "pip_hide", "pip_signal",
+  "commands": ["launch", "quit", "power", "audio", "media_key", "media_seek", "get_artwork", "toast", "pip_show", "pip_hide", "pip_signal",
                "set_sensor_interval", "sendspin_enable", "unpair", "resync"],
   "state_groups": ["device", "apps", "audio", "sensors", "controllers", "pip", "media", "sendspin"],
   "events": ["going_to_sleep", "shutting_down", "resumed", "toast_click", "pip_signal"],

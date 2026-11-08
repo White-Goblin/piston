@@ -2,6 +2,7 @@
 virtual media key through /dev/uinput."""
 import asyncio
 import fcntl
+import math
 import os
 import struct
 import subprocess
@@ -23,6 +24,8 @@ KEY_CODES = {"play_pause": 164, "play": 200, "pause": 201, "next": 163, "previou
 UI_SET_EVBIT, UI_SET_KEYBIT, UI_DEV_CREATE, UI_DEV_DESTROY = 0x40045564, 0x40045565, 0x5501, 0x5502
 UINPUT_PATH = "/dev/uinput"
 PLAYBACK_POLL_SECONDS = 2
+SEEK_LIMIT_SECONDS = 3600
+SEEK_POSITION_LIMIT_SECONDS = 7 * 24 * 3600
 EV_KEY, EV_SYN = 1, 0
 
 
@@ -161,6 +164,55 @@ class MediaKeyMixin:
             raise m.ProtocolError(m.BAD_REQUEST, f"key must be one of {', '.join(MPRIS_METHODS)}")
         result = await asyncio.get_running_loop().run_in_executor(None, self._send_media_key, key)
         await asyncio.sleep(0.4)  # let the player change state, so Home Assistant shows play/pause at once
+        await self._refresh_playback()
+        return result
+
+    def _send_media_seek(self, offset, position) -> dict:
+        """Blocking. Moves the first MPRIS player that accepts it (playing ones first) by `offset` seconds or to `position`
+        seconds. Raises ProtocolError(not_running | unsupported). The absolute `SetPosition` is preferred: some players (YouTube
+        in a Chromium shell) pause and report a stale position after a relative `Seek`, and honor `SetPosition` properly. A
+        player without a track id, or that rejects it, gets the relative `Seek`. There is no virtual-key fallback: apps ignore
+        those keys."""
+        order = {"Playing": 0, "Paused": 1, "Stopped": 2}
+        players = sorted(self._mpris_statuses(), key=lambda p: order.get(p[1], 3))
+        if not players and not self.app_state["running"]:
+            raise m.ProtocolError(m.NOT_RUNNING, "nothing is playing")
+        for name, _status in players:
+            try:
+                meta, now = self._read_details(name)
+            except (RuntimeError, OSError, subprocess.SubprocessError):
+                meta, now = {}, None
+            target = position if position is not None else (now + offset if now is not None else None)
+            trackid = meta.get("trackid")
+            if trackid and target is not None:
+                target = max(0.0, min(target, meta["length"]) if meta.get("length") else target)
+                try:
+                    self._busctl("call", name, MPRIS_PATH, MPRIS_PLAYER, "SetPosition", "ox", trackid, str(round(target * 1_000_000)))
+                    return {"via": "mpris", "player": name[len(MPRIS_PREFIX):]}
+                except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                    decky.logger.warning(f"MPRIS SetPosition on {name} failed: {e}")
+            relative = offset if offset is not None else (position - now if now is not None else None)
+            if relative is None:
+                continue
+            try:
+                # `--` first: busctl would read a negative offset as an option
+                self._busctl("call", name, MPRIS_PATH, MPRIS_PLAYER, "Seek", "x", "--", str(round(relative * 1_000_000)))
+            except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+                decky.logger.warning(f"MPRIS Seek on {name} failed: {e}")
+                continue
+            return {"via": "mpris", "player": name[len(MPRIS_PREFIX):]}
+        raise m.ProtocolError(m.UNSUPPORTED, "no player accepted the seek")
+
+    async def _cmd_media_seek(self, data: dict) -> dict:
+        offset, position = data.get("offset"), data.get("position")
+
+        def number(value, low, high):
+            return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and low <= value <= high
+
+        if (offset is None) == (position is None) or (offset is not None and not number(offset, -SEEK_LIMIT_SECONDS, SEEK_LIMIT_SECONDS)) \
+                or (position is not None and not number(position, 0, SEEK_POSITION_LIMIT_SECONDS)):
+            raise m.ProtocolError(m.BAD_REQUEST, f"give either offset (seconds, within {SEEK_LIMIT_SECONDS}) or position (seconds from the start)")
+        result = await asyncio.get_running_loop().run_in_executor(None, self._send_media_seek, offset, position)
         await self._refresh_playback()
         return result
 

@@ -191,6 +191,8 @@ class InputFrameTests(unittest.TestCase):
         {"k": "text", "s": "hello"},
         {"k": "action", "a": "steam"},
         {"k": "action", "a": "qam"},
+        {"k": "seek", "s": "+30"},
+        {"k": "seek", "s": "-1:30"},
         {"k": "release"},
     ]
 
@@ -217,6 +219,8 @@ class InputFrameTests(unittest.TestCase):
             [{"k": "click", "b": "m"}], [{"k": "key", "key": "F13"}], [{"k": "key"}],
             [{"k": "text", "s": ""}], [{"k": "text", "s": "x" * (m.MAX_INPUT_TEXT_LEN + 1)}], [{"k": "text", "s": 5}],
             [{"k": "action", "a": "quit"}],
+            [{"k": "seek"}], [{"k": "seek", "s": ""}], [{"k": "seek", "s": "30"}], [{"k": "seek", "s": "+"}], [{"k": "seek", "s": "+12345678"}],
+            [{"k": "seek", "s": "+3 0"}], [{"k": "seek", "s": "+a"}], [{"k": "seek", "s": 30}],
         ]
         for events in bad:
             with self.assertRaises(m.ProtocolError, msg=repr(events)) as ctx:
