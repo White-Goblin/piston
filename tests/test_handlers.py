@@ -23,6 +23,7 @@ class Host(SettingsMixin, StateMixin, ControlMixin, AudioMixin, PipMixin, PipSig
         self.pushed, self.events = [], []
         self.http_port, self.nonce = 0, "n"
         self.calls = []
+        self.cec_addresses, self.cec_call_error = "ay 1 4", ""
 
     def _push(self, name, data):
         self.pushed.append((name, data))
@@ -34,7 +35,9 @@ class Host(SettingsMixin, StateMixin, ControlMixin, AudioMixin, PipMixin, PipSig
     def _busctl(self, *args):
         self.calls.append(("busctl", args))
         if args[0] == "get-property":
-            return {"Active": "b true", "AudioLogicalAddress": "y 5"}[args[-1]]
+            return {"Active": "b true", "AudioLogicalAddress": "y 5", "LogicalAddresses": self.cec_addresses}[args[-1]]
+        if args[0] == "call" and args[4] in ("VolumeUp", "VolumeDown", "Mute") and self.cec_call_error:
+            raise RuntimeError(self.cec_call_error)
         return ""
 
     def _wpctl(self, *args):
@@ -191,6 +194,36 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("VolumeUp", presses[0][1])
         await self.h._cmd_audio({"action": "mute"})
         self.assertEqual(len([c for c in self.h.calls if c[1][0] == "call"]), 3)
+
+    async def test_cec_without_a_logical_address_says_so_and_does_not_press(self):
+        self.h.audio_mode = "cec"
+        self.h.cec_addresses = "ay 0"                              # the daemon gave its address up: the soundbar stopped answering
+        with self.assertRaises(m.ProtocolError) as cm:
+            await self.h._cmd_audio({"action": "volume_down"})
+        self.assertEqual((cm.exception.code, cm.exception.message), (m.BUSY, "HDMI CEC has no link right now. Check that the soundbar or TV is on, then try again."))
+        self.assertFalse([c for c in self.h.calls if c[0] == "busctl" and c[1][0] == "call"])
+        self.assertFalse(self.h.cec_link_ok)
+        self.h.cec_addresses = "ay 1 4"                            # the link is back: it works again
+        await self.h._cmd_audio({"action": "volume_down"})
+        self.assertTrue(self.h.cec_link_ok)
+
+    async def test_a_link_that_drops_between_the_check_and_the_call_gets_the_same_message(self):
+        self.h.audio_mode = "cec"
+        self.h.cec_call_error = "Call failed: The device does not have a logical address"
+        with self.assertRaises(m.ProtocolError) as cm:
+            await self.h._cmd_audio({"action": "mute"})
+        self.assertEqual(cm.exception.code, m.BUSY)
+
+    async def test_other_cec_call_failures_keep_their_text_and_an_unreadable_address_list_is_not_a_failure(self):
+        self.h.audio_mode = "cec"
+        self.h.cec_call_error = "Call failed: timeout"
+        with self.assertRaises(m.ProtocolError) as cm:
+            await self.h._cmd_audio({"action": "volume_up"})
+        self.assertEqual((cm.exception.code, cm.exception.message), (m.INTERNAL, "audio command failed: Call failed: timeout"))
+        self.h.cec_call_error = ""
+        for odd in ("", "ay", "x 1", "ay x"):
+            self.h.cec_addresses = odd
+            await self.h._cmd_audio({"action": "volume_up"})       # unknown format: the call decides
 
     async def test_cec_rejects_system_actions_and_bad_steps(self):
         self.h.audio_mode = "cec"

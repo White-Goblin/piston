@@ -112,6 +112,7 @@ A wired connection is recommended. Over Wi-Fi the device can wake from sleep but
 - **The plugin update never finishes.** Decky Loader's install dialog is waiting for approval on the device, or the device is in desktop mode. Switch to game mode.
 - **The device does not show up in Music Assistant.** Check the Sendspin status sensor. `disabled` means the switch is off; `error` shows the reason. Music Assistant must be on the same network segment.
 - **Music Assistant plays but there is no sound.** The Sendspin volume is separate from the system volume. Check the volume of the Music Assistant player and of the device's output.
+- **Volume buttons say "HDMI CEC has no link right now".** The soundbar or TV stopped answering HDMI CEC, so the device gave up its CEC address and the volume buttons cannot reach it. Turn the soundbar or TV off and on (or reconnect the HDMI cable); the buttons work again once the link is back. The plugin log (`~/homebrew/logs/Piston/`) notes when the link drops and when it returns.
 - **Turn on does nothing.** Set up [Wake on LAN](#wake-on-lan). Some devices cannot wake from a full shutdown.
 
 ## Uninstall
