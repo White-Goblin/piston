@@ -83,6 +83,8 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
         features = FEATURES
         if self._audio.get("mode") == "system":
             features |= MediaPlayerEntityFeature.VOLUME_SET
+        if self.media_duration is not None:  # a live stream or a game has no length to seek in
+            features |= MediaPlayerEntityFeature.SEEK
         return features
 
     @property
@@ -217,6 +219,10 @@ class DeckyMediaPlayer(DeckyEntity, MediaPlayerEntity):
 
     async def async_media_previous_track(self) -> None:
         await self._command("media_key", {"key": "previous"})
+
+    async def async_media_seek(self, position: float) -> None:
+        """Home Assistant gives an absolute position in seconds; the device moves its player there."""
+        await self._command("media_seek", {"position": float(position)})
 
     async def async_volume_up(self) -> None:
         await self._step(+1)

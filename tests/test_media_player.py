@@ -122,8 +122,12 @@ class NowPlayingTests(unittest.IsolatedAsyncioTestCase):
         coord.on_connection(False)
         self.assertIsNone(p.media_artist)
 
-    async def test_the_features_have_no_seek(self):
+    async def test_seek_is_offered_only_with_a_known_duration(self):
         p, _ = player(apps=RUNNING, media=MEDIA)
+        self.assertTrue(p.supported_features & F.SEEK)
+        p, _ = player(apps=RUNNING, media={"title": "Live", "kind": "video", "source": "mpris"})
+        self.assertFalse(p.supported_features & F.SEEK)
+        p, _ = player(apps=RUNNING)
         self.assertFalse(p.supported_features & F.SEEK)
 
 
@@ -155,6 +159,17 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         await p.async_media_next_track()
         await p.async_media_previous_track()
         self.assertEqual([c[1]["key"] for c in self.calls(coord)], ["play", "pause", "play_pause", "next", "previous"])
+
+    async def test_seek_sends_the_absolute_position(self):
+        p, coord = player(apps=RUNNING, media=MEDIA)
+        await p.async_media_seek(100)
+        self.assertEqual(self.calls(coord)[-1], ("media_seek", {"position": 100.0}))
+
+    async def test_a_seek_failure_becomes_a_user_error(self):
+        p, coord = player(apps=RUNNING, media=MEDIA)
+        coord.client.error = CommandError("unsupported", "unknown command media_seek")
+        with self.assertRaises(HomeAssistantError):
+            await p.async_media_seek(100)
 
     async def test_cec_volume_and_mute_toggle(self):
         p, coord = player(audio={"mode": "cec"})
@@ -193,3 +208,4 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(HomeAssistantError) as cm:
             await p.async_media_play_pause()
         self.assertEqual(str(cm.exception), "nothing is playing")
+

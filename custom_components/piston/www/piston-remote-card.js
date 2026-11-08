@@ -266,6 +266,40 @@
     return { mode, percent: level === null ? 0 : Math.round(level * 100), muted: a.is_volume_muted === true };
   }
 
+  /** The seek buttons: a press seeks one step of SEEK_STEP_S at once, and holding it for SEEK_HOLD_MS repeats a step every
+   * SEEK_REPEAT_MS. A press within SEEK_AIM_MS of the last one continues from where that one aimed (the reported position has not
+   * caught up yet). */
+  const SEEK_STEP_S = 10, SEEK_HOLD_MS = 400, SEEK_REPEAT_MS = 400, SEEK_FEATURE = 2, SEEK_AIM_MS = 3000;
+  /** The label for a seek that moved `seconds` from where it started: "+30", "-10", "+1:30". */
+  function seekLabel(seconds) {
+    const n = Math.round(Math.abs(seconds)), sign = seconds < 0 ? "-" : "+";
+    return n < 60 ? sign + n : sign + Math.floor(n / 60) + ":" + String(n % 60).padStart(2, "0");
+  }
+  /** Whether the media player can seek and where it is: the last reported position, advanced by the time since it was read
+   * while playing, within 0..duration. `attrs` are the media player's attributes, `now` is a time in milliseconds. */
+  function seekView(attrs, state, now) {
+    const a = attrs || {};
+    const duration = a.media_duration, position = a.media_position;
+    if (!(a.supported_features & SEEK_FEATURE) || !(duration > 0) || typeof position !== "number") return { canSeek: false, position: 0, duration: 0 };
+    let at = position;
+    const read = Date.parse(a.media_position_updated_at);
+    if (state === "playing" && Number.isFinite(read)) at += Math.max(0, (now - read) / 1000);
+    return { canSeek: true, position: Math.min(Math.max(at, 0), duration), duration };
+  }
+  /** The positions a held button asks for, one per tick: the card keeps its own target, so it does not wait for the device to
+   * report a new position between ticks. `tick()` is null when the target is already at an end. */
+  class SeekHold {
+    constructor(position, duration, direction, step = SEEK_STEP_S) {
+      this.target = position; this.duration = duration; this.direction = direction < 0 ? -1 : 1; this.step = step;
+    }
+    tick() {
+      const next = Math.min(Math.max(this.target + this.direction * this.step, 0), this.duration);
+      if (next === this.target) return null;
+      this.target = next;
+      return next;
+    }
+  }
+
   /** Sends at most one volume value per interval while a slider is dragged; the newest value that was held back is handed out by
    * `flush()` (a trailing timer and the release use it), so the last position always arrives. */
   const VOLUME_INTERVAL_MS = 100;
@@ -487,7 +521,7 @@
 
     #transport { display: flex; gap: 8px; }
     #transport button { flex: 1; min-width: 0; height: 46px; display: grid; place-items: center; padding: 0; border-radius: var(--pr-radius); }
-    #transport button ha-icon { --mdc-icon-size: 28px; color: var(--pr-text); }
+    #transport button ha-icon { --mdc-icon-size: 26px; color: var(--pr-text); }
     #transport.off { opacity: .4; pointer-events: none; }
 
     /* dock: Steam and Quick Access on the left, the arrow wheel in the middle, Back and the keyboard on the right */
@@ -589,7 +623,9 @@
         </div>
         <div id="transport">
           <button class="ctl" data-media="media_previous_track" aria-label="Previous track"><ha-icon icon="mdi:skip-previous"></ha-icon></button>
+          <button class="ctl" data-seek="-1" aria-label="Seek back 10 seconds (hold to keep going)"><ha-icon icon="mdi:rewind-10"></ha-icon></button>
           <button class="ctl" data-media="media_play_pause" id="playPause" aria-label="Play or pause"><ha-icon id="playPauseIcon" icon="mdi:play-pause"></ha-icon></button>
+          <button class="ctl" data-seek="1" aria-label="Seek forward 10 seconds (hold to keep going)"><ha-icon icon="mdi:fast-forward-10"></ha-icon></button>
           <button class="ctl" data-media="media_next_track" aria-label="Next track"><ha-icon icon="mdi:skip-next"></ha-icon></button>
         </div>
         <textarea id="kb" autocapitalize="sentences" autocomplete="off" autocorrect="on" spellcheck="true" aria-label="keyboard input"></textarea>
@@ -610,6 +646,7 @@
         this._wheel = new WheelGesture(); this._wheelHold = 0; this._wheelRep = 0; this._wheelEl = null;
         this._text = new TextSync(); this._composing = false; this._toastTimer = 0;
         this._volHold = 0; this._volRep = 0; this._volBtn = null;
+        this._seekTimer = 0; this._seekRep = 0; this._seekBtn = null; this._seekAim = null;
         this._sender = new VolumeSender(); this._volTimer = 0; this._volDragging = false;
         this._appsKey = null; this._dialogOpen = false; this._entsRef = null; this._mpRef = UNSET;
         this._onVisibility = () => { if (document.visibilityState !== "visible") this._stopAll(); };
@@ -693,6 +730,7 @@
         this._scroll.reset();
         this._wheelDone();
         this._stopVolume();
+        this._stopSeek();
         clearTimeout(this._volTimer); this._volTimer = 0; this._volDragging = false;
       }
 
@@ -735,6 +773,8 @@
         el.powerText.textContent = plan.label;
         el.transport.hidden = !cfg.show_transport;
         el.transport.classList.toggle("off", !s.volume);
+        const seekable = s.volume && seekView(this._mpAttrs, this._mpState, Date.now()).canSeek;
+        for (const b of el.transport.querySelectorAll("[data-seek]")) b.classList.toggle("off", !seekable);
         el.playPauseIcon.setAttribute("icon", this._mpState === "playing" ? "mdi:pause" : "mdi:play");
         el.vol.classList.toggle("off", !s.volume);
         el.volLevel.classList.toggle("off", !s.volume);
@@ -882,6 +922,45 @@
             if (id && this.state.volume) this._call("media_player", b.dataset.media, { entity_id: id });
           });
         }
+        for (const b of this._el.transport.querySelectorAll("[data-seek]")) {
+          const dir = Number(b.dataset.seek);
+          b.addEventListener("click", (e) => { if (e.detail === 0) this._seekStep(dir); });   // keyboard activation; touch and mouse use the pointer events
+          b.addEventListener("pointerdown", () => {
+            this._stopSeek(); this._seekBtn = b; b.classList.add("down");
+            this._seekStep(dir);
+            this._seekTimer = setTimeout(() => {
+              this._seekTimer = 0;
+              this._seekStep(dir);
+              this._seekRep = setInterval(() => this._seekStep(dir), SEEK_REPEAT_MS);
+            }, SEEK_HOLD_MS);
+          });
+          for (const ev of ["pointerup", "pointercancel", "pointerleave"]) b.addEventListener(ev, () => { if (this._seekBtn === b) this._stopSeek(); });
+        }
+      }
+      /** One seek step forward (dir 1) or back (-1) from the reported position, or from where the last step aimed. */
+      _seekStep(dir) {
+        const id = this._ents.mediaPlayer;
+        if (!id || !this.state.volume) return;
+        const view = seekView(this._mpAttrs, this._mpState, Date.now());
+        if (!view.canSeek) return;
+        const at = now(), aim = this._seekAim, again = aim && at - aim.at < SEEK_AIM_MS;
+        const from = again ? aim.from : view.position;
+        const hold = new SeekHold(again ? aim.value : view.position, view.duration, dir);
+        const target = hold.tick();
+        this._seekAim = { value: target === null ? hold.target : target, at, from };
+        if (target === null) return;                        // already at an end
+        buzz(); this._announceSeek(seekLabel(target - from));
+        this._call("media_player", "media_seek", { entity_id: id, seek_position: target });
+      }
+      /** Tells the device how far the seeks of this run of presses have moved ("+30"). The device decides what to do with it: show
+       * it beside its cursor and nudge the pointer so the playing app shows its progress bar (a seek through the media player is
+       * not input), each only if its panel setting is on. Only while the remote input works. */
+      _announceSeek(label) {
+        if (label && this.state.input) this.send([{ k: "seek", s: label }]);
+      }
+      _stopSeek() {
+        clearTimeout(this._seekTimer); clearInterval(this._seekRep); this._seekTimer = this._seekRep = 0;
+        if (this._seekBtn) { this._seekBtn.classList.remove("down"); this._seekBtn = null; }
       }
       _stopVolume() {
         clearTimeout(this._volHold); clearInterval(this._volRep); this._volHold = this._volRep = 0;
@@ -1085,6 +1164,6 @@
     }
   }
 
-  const api = { layoutFrom, CONFIG_DEFAULTS, volumeView, VolumeSender, editorSchema, editorData, editorConfig, EDITOR_LABELS, powerPlan, appsView, HOME_SOURCE, deriveState, MoveBatcher, Outbox, ScrollAccumulator, Inertia, PadGesture, WheelGesture, TextSync, flickFrom, resolveEntities, statusFromError, StatusFeed, clampSpeed };
+  const api = { seekLabel, seekView, SeekHold, layoutFrom, CONFIG_DEFAULTS, volumeView, VolumeSender, editorSchema, editorData, editorConfig, EDITOR_LABELS, powerPlan, appsView, HOME_SOURCE, deriveState, MoveBatcher, Outbox, ScrollAccumulator, Inertia, PadGesture, WheelGesture, TextSync, flickFrom, resolveEntities, statusFromError, StatusFeed, clampSpeed };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })();

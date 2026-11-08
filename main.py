@@ -60,6 +60,7 @@ class Plugin(
             "power": self._cmd_power,
             "audio": self._cmd_audio,
             "media_key": self._cmd_media_key,
+            "media_seek": self._cmd_media_seek,
             "get_artwork": self._cmd_get_artwork,
             "toast": self._cmd_toast,
             "pip_show": self._cmd_pip_show,
@@ -109,6 +110,8 @@ class Plugin(
             "error": self.error,
             "remote_input": self.remote_input,
             "remote_input_error": self.input_error if self.remote_input else "",
+            "seek_badge": self.seek_badge,
+            "seek_nudge": self.seek_nudge,
         }
 
     # --- lifecycle --------------------------------------------------------

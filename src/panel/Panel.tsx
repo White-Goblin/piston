@@ -32,7 +32,7 @@ export function Panel() {
         <AppsSection settings={state.settings} setApps={state.setApps} />
         <WakeOnLanSection />
       </PanelSection>
-      <RemoteInputSection status={state.status} setRemoteInput={state.setRemoteInput} />
+      <RemoteInputSection status={state.status} setRemoteInput={state.setRemoteInput} setSeekBadge={state.setSeekBadge} setSeekNudge={state.setSeekNudge} />
     </>
   );
 }

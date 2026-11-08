@@ -59,6 +59,12 @@ class FeedTests(unittest.IsolatedAsyncioTestCase):
         result = await self.feed.poll(50)
         self.assertEqual((result["reset"], result["seq"], result["items"]), (True, 1, []))
 
+    async def test_a_badge_is_an_item_with_the_wall_time_it_was_made_at(self):
+        feed = CursorFeed(clock=lambda: 0.0, wall=lambda: 1234.5)
+        feed.badge("+30")
+        result = await feed.poll(0)
+        self.assertEqual((result["items"][-1]["badge"], result["items"][-1]["ts"]), ("+30", 1234500))
+
     async def test_stop_is_an_item_the_page_can_see(self):
         self.feed.publish(pos())
         self.feed.stop()

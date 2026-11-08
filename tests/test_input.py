@@ -62,6 +62,9 @@ class FakeFeed:
         if self.view_event is not None:
             self.view_event()
 
+    def badge(self, text):
+        self.log.append(("badge", text))
+
     def stop(self):
         self.log.append(("feed_stop",))
 
@@ -112,6 +115,13 @@ class InputTestCase(unittest.IsolatedAsyncioTestCase):
         self.h.cursor_feed = self.feed
         self.addCleanup(self.h.input_keys.shutdown, False)
         self.addCleanup(self.h.input_sync.stop)
+
+    def ready(self):
+        """The virtual devices exist (first use parks the pointer) and the log and the feed start empty."""
+        self.h.input_tracker.set_screen(1000, 800, 1.0)
+        self.assertTrue(self.h._input_ready())
+        self.log.clear()
+        self.feed.published.clear()
 
     async def settle(self, seconds=0.0):
         await asyncio.sleep(seconds)
@@ -225,6 +235,53 @@ class EventTests(InputTestCase):
         self.assertIn(("scroll", -2, 1), self.log)                         # vertical first, then horizontal
         self.assertEqual(self.feed.published[-1]["d"], False)
         self.assertEqual(len(self.feed.published), 2)
+
+    async def test_a_seek_shows_the_badge_and_nudges_the_pointer_out_and_back_without_moving_the_drawn_cursor(self):
+        self.ready()
+        self.h._on_input([{"k": "seek", "s": "+30"}])
+        self.assertIn(("badge", "+30"), self.log)
+        self.assertEqual(len(self.feed.published), 1)                       # the resting position, so the overlay exists; the nudge is not published
+        moves = self.calls("move")
+        self.assertEqual(len(moves), 1)
+        self.assertGreater(moves[0][1], 0)                                  # left half of the screen: out to the right
+        await self.settle(input_module.NUDGE_BACK + 0.05)
+        moves = self.calls("move")
+        self.assertEqual(sum(m[1] for m in moves), 0)                       # and back
+        self.assertEqual(len(self.feed.published), 1)
+        self.assertEqual(self.h.input_nudged, 0.0)
+
+    async def test_the_nudge_goes_toward_the_middle_of_the_screen(self):
+        self.ready()
+        self.h.input_tracker.snap_to(900, 400)
+        self.h._on_input([{"k": "seek", "s": "-10"}])
+        self.assertLess(self.calls("move")[0][1], 0)
+        self.h._input_unnudge()
+
+    async def test_each_setting_turns_its_part_off(self):
+        self.ready()
+        self.h.seek_badge = False
+        self.h._on_input([{"k": "seek", "s": "+10"}])
+        self.assertEqual((self.calls("badge"), len(self.feed.published), len(self.calls("move"))), ([], 0, 1))
+        self.h._input_unnudge()
+        self.log.clear()
+        self.h.seek_badge, self.h.seek_nudge = True, False
+        self.h._on_input([{"k": "seek", "s": "+10"}])
+        self.assertEqual((len(self.calls("badge")), self.calls("move")), (1, []))
+
+    async def test_a_nudge_that_is_out_is_taken_back_by_release_and_by_unload(self):
+        self.ready()
+        for finish in (self.h._input_release, self.h._input_abort):
+            self.log.clear()
+            self.h._on_input([{"k": "seek", "s": "+10"}])
+            finish()
+            self.assertEqual(sum(m[1] for m in self.calls("move")), 0)
+            self.assertEqual(self.h.input_nudged, 0.0)
+            self.assertIsNone(self.h.input_nudge_timer)
+
+    async def test_without_remote_input_a_seek_does_nothing(self):
+        self.h.remote_input = False
+        self.h._on_input([{"k": "seek", "s": "+30"}])
+        self.assertEqual((self.log, self.feed.published), ([], []))
 
     async def test_the_cursor_position_is_published_at_most_sixty_times_a_second(self):
         self.h._on_input([{"k": "move", "dx": 1, "dy": 0}] * 100)

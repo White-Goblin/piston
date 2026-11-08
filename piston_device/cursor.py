@@ -16,8 +16,9 @@ ACTIVITY_REFRESH = 0.4   # the view stays alive 1.7 s after the last activity ev
 
 
 class CursorFeed:
-    def __init__(self, clock=time.monotonic):
+    def __init__(self, clock=time.monotonic, wall=time.time):
         self._clock = clock
+        self._wall = wall
         self._items: list[dict] = []
         self._seq = 0
         self._waiters: set[asyncio.Future] = set()
@@ -38,6 +39,11 @@ class CursorFeed:
         if down != self._last_down or now - self._last_activity >= ACTIVITY_REFRESH:
             self._last_activity, self._last_down = now, down
             self._emit("cursor_activity", {"down": down})
+
+    def badge(self, text: str) -> None:
+        """A short label (the seconds a seek moved, +30) drawn beside the cursor for a moment. It carries the wall time (ms) it was
+        made at, so a page that loads a moment later can tell how much of its time is left."""
+        self._add({"badge": text, "ts": round(self._wall() * 1000)})
 
     def stop(self) -> None:
         """Input stopped (released, link lost): tell the page to hide the cursor now."""

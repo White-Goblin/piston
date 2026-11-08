@@ -60,6 +60,18 @@ class PluginTests(unittest.IsolatedAsyncioTestCase):
         self.plugin._unload_now()
         self.assertIn("abort", calls)                            # unload closes the virtual devices, synchronously
 
+    async def test_the_seek_settings_show_in_the_status_and_survive_a_restart(self):
+        status = await self.plugin.get_status()
+        self.assertEqual((status["seek_badge"], status["seek_nudge"]), (True, True))
+        self.assertEqual(await self.plugin.set_seek_badge(False), {"seek_badge": False})
+        self.assertEqual(await self.plugin.set_seek_nudge(False), {"seek_nudge": False})
+        status = await self.plugin.get_status()
+        self.assertEqual((status["seek_badge"], status["seek_nudge"]), (False, False))
+        restarted = main.Plugin()
+        restarted._init_input()
+        self.assertEqual((restarted.seek_badge, restarted.seek_nudge), (False, False))
+        restarted.input_keys.shutdown(wait=False)
+
     async def test_the_remote_input_choice_shows_in_the_status_and_survives_a_restart(self):
         status = await self.plugin.get_status()
         self.assertEqual((status["remote_input"], status["remote_input_error"]), (True, ""))

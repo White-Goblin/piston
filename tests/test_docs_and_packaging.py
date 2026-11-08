@@ -49,7 +49,7 @@ class DocsMatchTheCode(unittest.TestCase):
             self.assertIn(f"`{key}`", reference, f"card key {key} is not in the reference")
         for key in messages.INPUT_KEYS:
             self.assertIn(key, protocol)
-        for kind in ("move", "scroll", "click", "key", "text", "action", "release"):
+        for kind in ("move", "scroll", "click", "key", "text", "action", "seek", "release"):
             self.assertIn(f'"k":"{kind}"', protocol.replace(" ", ""), f"event {kind} is not in protocol.md")
         self.assertIn("piston-remote-card", read("README.md"))
 
