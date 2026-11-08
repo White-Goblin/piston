@@ -25,7 +25,7 @@ Each rule names the test or script that guards it; `none (convention)` means not
 | Every integration platform sets `PARALLEL_UPDATES`, and failed device commands map through `command_failure`. | Home Assistant quality scale. | `tests/test_quality_rules.py::ParallelUpdatesTests` |
 
 ## Current state
-- Version 0.8.0 (the remote card), released; `main` is the release branch.
+- Version 0.9.0 (seeking from the remote card), released; `main` is the release branch.
 - Work happens on a branch per effort; merge only after the engineer verifies.
 - Local notes, the dev device and the planning tree are in `AGENTS.local.md` (git-ignored). If it is missing (a fresh clone, CI), everything needed to build, test and release is in `docs/`; ask the engineer for device access and never invent addresses.
 
