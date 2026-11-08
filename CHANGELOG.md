@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.9.0
+
+**Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3 and adds one command and one input event, so an older plugin keeps working for everything else, but seeking from the card needs this plugin (an older one answers that it does not know the command).
+
+### Added
+- **Playback buttons on the remote card.** A row of five buttons under the controls: previous track, seek back, play/pause, seek forward and next track. The row can be hidden with the new **Show the play, pause, next and previous buttons** option, and is off while the device is off.
+- **Seeking.** The seek buttons move 10 seconds on each tap and keep going while you hold them. The media player now supports `media_player.media_seek` whenever the player reports how long the video is (not for a live stream or a game). The device moves the player with MPRIS `SetPosition` and falls back to a relative seek, because some players mishandle a relative one.
+- **Seek amount on the device's cursor.** While you seek, the cursor circle on the device's screen flows to the side (left for back, right for forward), turns into a label such as `+30` or `-1:30` that adds up over a run of presses, and flows back.
+- **The playing app shows its progress bar.** A seek is not input for a video app, so the device also nudges the pointer a few pixels and back (the drawn cursor stays still).
+- **Two switches in the Piston panel** under **Remote input**, both on by default: **Show seek amount on the cursor** and **Nudge the pointer on seek**.
+
+### Notes
+- Seeking depends on the app: players that report their length and accept MPRIS seeks work (tested with Jellyfin and YouTube); a player without a length leaves the seek buttons dimmed.
+- The remote card needs the card file of this version: after updating, reload the dashboard (the card address changes with the file, so the Companion app does not keep an old copy).
+- The README's media player row and the [reference](https://github.com/White-Goblin/piston/blob/main/docs/reference.md#remote-card) describe the behavior.
+
 ## 0.8.0
 
 **Update the plugin on the device and the integration in Home Assistant together; a plugin on 0.4.1 or newer updates itself to this one (you approve the install on the device).** This release keeps protocol version 3 and adds one frame, so an older plugin keeps working for everything else, but the remote card needs this plugin.
